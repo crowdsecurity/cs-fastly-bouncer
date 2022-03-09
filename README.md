@@ -78,6 +78,7 @@ fastly_account_configs:
         clone_reference_version: true # whether to clone the "reference_version".
         captcha_cookie_expiry_duration: '1800'  # Duration to persist the cookie containing proof of solving captcha
 
+bouncer_version:
 update_frequency: 10 # Duration in seconds to poll the crowdsec API
 log_level: info # Valid choices are either of "debug","info","warning","error"
 log_mode: file # Valid choices are "file" or "stdout" or "stderr"
