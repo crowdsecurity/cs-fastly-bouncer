@@ -21,7 +21,13 @@ from fastly_bouncer.config import (
 )
 from fastly_bouncer.fastly_api import ACL_CAPACITY, FastlyAPI
 from fastly_bouncer.service import ACLCollection, Service
-from fastly_bouncer.utils import SUPPORTED_ACTIONS, VERSION, CustomFormatter, get_default_logger, with_suffix
+from fastly_bouncer.utils import (
+    SUPPORTED_ACTIONS,
+    VERSION,
+    CustomFormatter,
+    get_default_logger,
+    with_suffix,
+)
 
 logger: logging.Logger = get_default_logger()
 
