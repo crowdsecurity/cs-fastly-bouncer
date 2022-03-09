@@ -7,7 +7,7 @@ import trio
 import yaml
 
 from fastly_bouncer.fastly_api import FastlyAPI
-from fastly_bouncer.utils import are_filled_validator
+from fastly_bouncer.utils import are_filled_validator, VERSION
 
 
 @dataclass
@@ -62,6 +62,7 @@ class Config:
     update_frequency: int
     crowdsec_config: CrowdSecConfig
     cache_path: str = "/var/lib/crowdsec/crowdsec-fastly-bouncer/cache/fastly-cache.json"
+    bouncer_version: str = VERSION
     fastly_account_configs: List[FastlyAccountConfig] = field(default_factory=list)
 
     def get_log_level(self) -> int:

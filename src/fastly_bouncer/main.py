@@ -3,7 +3,6 @@ import json
 import logging
 import signal
 import sys
-from importlib.metadata import version
 from logging.handlers import RotatingFileHandler
 from math import ceil
 from pathlib import Path
@@ -22,9 +21,7 @@ from fastly_bouncer.config import (
 )
 from fastly_bouncer.fastly_api import ACL_CAPACITY, FastlyAPI
 from fastly_bouncer.service import ACLCollection, Service
-from fastly_bouncer.utils import SUPPORTED_ACTIONS, CustomFormatter, get_default_logger, with_suffix
-
-VERSION = version("crowdsec-fastly-bouncer")
+from fastly_bouncer.utils import SUPPORTED_ACTIONS, VERSION, CustomFormatter, get_default_logger, with_suffix
 
 logger: logging.Logger = get_default_logger()
 
@@ -191,7 +188,7 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
                 logger.warning(f"cache file at {config.cache_path} is empty")
             else:
                 cache = json.loads(s)
-                services = list(map(Service.from_jsonable_dict, cache))
+                services = list(map(Service.from_jsonable_dict, cache["service_states"]))
                 logger.info(f"loaded exisitng infra using cache")
                 if not cleanup_mode:
                     return services
@@ -233,6 +230,7 @@ def set_logger(config: Config):
 
 
 async def run(config: Config, services: List[Service]):
+    global VERSION
     crowdsec_client = StreamClient(
         lapi_url=config.crowdsec_config.lapi_url,
         api_key=config.crowdsec_config.lapi_key,
@@ -253,8 +251,12 @@ async def run(config: Config, services: List[Service]):
 
         new_states = list(map(lambda service: service.as_jsonable_dict(), services))
         if new_states != previous_states:
+            logger.debug("updating cache")
+            print("HERE")
+            new_cache = {"service_states": new_states, "bouncer_version": VERSION}
             async with await trio.open_file(config.cache_path, "w") as f:
-                await f.write(json.dumps(new_states, indent=4))
+                await f.write(json.dumps(new_cache, indent=4))
+            logger.debug("done updating cache")
             previous_states = new_states
 
         if exiting:

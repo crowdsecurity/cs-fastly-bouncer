@@ -1,7 +1,9 @@
 import logging
 import sys
+from importlib.metadata import version
 
 SUPPORTED_ACTIONS = ["ban", "captcha"]
+VERSION = version("crowdsec-fastly-bouncer")
 
 
 class CustomFormatter(logging.Formatter):
