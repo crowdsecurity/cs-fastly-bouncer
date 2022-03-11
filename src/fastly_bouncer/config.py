@@ -27,7 +27,7 @@ class FastlyServiceConfig:
     reference_version: str
     clone_reference_version: bool = True
     activate: bool = False
-    max_items: int = 5000
+    max_items: int = 20000
     captcha_cookie_expiry_duration: str = "1800"
 
     def __post_init__(self):

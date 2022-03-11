@@ -258,7 +258,6 @@ async def run(config: Config, services: List[Service]):
         new_states = list(map(lambda service: service.as_jsonable_dict(), services))
         if new_states != previous_states:
             logger.debug("updating cache")
-            print("HERE")
             new_cache = {"service_states": new_states, "bouncer_version": VERSION}
             async with await trio.open_file(config.cache_path, "w") as f:
                 await f.write(json.dumps(new_cache, indent=4))
@@ -297,8 +296,11 @@ def main():
     arg_parser.add_argument("-o", type=str, help="Path to file to output the generated config.")
     arg_parser.add_help = True
     args = arg_parser.parse_args()
-    if not args.c.exists():
-        print(f"config at {args.c} doesn't exist", file=sys.stderr)
+    if not args.c or not args.c.exists():
+        if not args.c:
+            print("config file not provided", file=sys.stderr)
+        else:
+            print(f"config at {args.c} doesn't exist", file=sys.stderr)
         if args.g:
             gc = trio.run(ConfigGenerator().generate_config, args.g)
             print_config(gc, args.o)
@@ -308,7 +310,7 @@ def main():
         sys.exit(1)
     try:
         config = parse_config_file(args.c)
-        if args.d:  # We want to display this to stderr
+        if args.d or args.c:  # We want to display this to stderr
             config.log_mode = "stderr"
         set_logger(config)
     except Exception as e:
