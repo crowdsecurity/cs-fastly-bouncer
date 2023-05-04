@@ -51,7 +51,6 @@ async def setup_action_for_service(
     service_version,
     sender_chan,
 ) -> ACLCollection:
-
     acl_count = ceil(service_cfg.max_items / ACL_CAPACITY)
     acl_collection = ACLCollection(
         api=fastly_api,
