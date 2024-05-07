@@ -15,8 +15,8 @@ from fastly_bouncer.utils import with_suffix
 logger: logging.Logger = logging.getLogger("")
 
 
-ACL_CAPACITY = 100
-
+ACL_CAPACITY = 1000 # as of 2024-05
+ACL_BATCH_SIZE = 1000 # as of 2024-05
 
 @dataclass
 class ACL:
@@ -47,6 +47,8 @@ class ACL:
             "created": self.created,
         }
 
+    def as_set(self) -> Set[str]:
+        return set([ip_subnet for ip_subnet, _ in self.entries.items()])
 
 @dataclass
 class VCL:
@@ -274,7 +276,7 @@ class FastlyAPI:
 
     async def refresh_acl_entries(self, acl: ACL) -> Dict[str, str]:
         resp = await self.session.get(
-            self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page=100")
+            self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page={ACL_BATCH_SIZE}")
         )
         resp = resp.json()
         acl.entries = {}
@@ -304,10 +306,10 @@ class FastlyAPI:
         if not update_entries:
             return
 
-        # Only 100 operations per request can be done on an acl.
+        # Only ACL_BATCH_SIZE operations per request can be done on an acl.
         async with trio.open_nursery() as n:
-            for i in range(0, len(update_entries), 100):
-                update_entries_batch = update_entries[i : i + 100]
+            for i in range(0, len(update_entries), ACL_BATCH_SIZE):
+                update_entries_batch = update_entries[i : i + ACL_BATCH_SIZE]
                 request_body = {"entries": update_entries_batch}
                 f = partial(self.session.patch, json=request_body)
                 n.start_soon(
@@ -316,6 +318,7 @@ class FastlyAPI:
                 )
 
         acl = await self.refresh_acl_entries(acl)
+        # TODO BUG: the acls are updated but the service state is not
 
     @staticmethod
     def api_url(endpoint: str) -> str:

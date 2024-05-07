@@ -29,10 +29,10 @@ class ACLCollection:
     ):
         self.acls: List[ACL] = acls
         self.api: FastlyAPI = api
-        self.service_id = service_id
-        self.version = version
-        self.action = action
-        self.state: Set = state
+        self.service_id = service_id  # Fastly service ID
+        self.version = version # Fastly version ID, probably of first time it was added and doesn't change
+        self.action = action  # "ban" "captcha" etc
+        self.state: Set = state  # All the "ip/subnet" for the ACLCollection
 
     def as_jsonable_dict(self) -> Dict:
         return {
@@ -97,6 +97,9 @@ class ACLCollection:
         return False
 
     def transform_to_state(self, new_state):
+        """ TODO: Change this so it is atomic in that if the change at fastly fails, the state does not transform.
+        When the transform and commit are not an atomic operation, failures in the fastly HTTP calls can leave the
+        state incorrect."""
         new_items = new_state - self.state
         expired_items = self.state - new_state
         if new_items:
@@ -175,6 +178,13 @@ class ACLCollection:
         acl.entries_to_add = set()
         acl.entries_to_delete = set()
 
+    async def refresh_from_fastly(self):
+        async with trio.open_nursery() as n:
+            for acl in self.acls:
+                    n.start_soon(self.api.refresh_acl_entries, acl)
+
+        self.state = set().union(*[acl.as_set() for acl in self.acls])
+
 
 @dataclass
 class Service:
@@ -186,12 +196,12 @@ class Service:
     activate: bool
     captcha_expiry_duration: str = "1800"
     _first_time: bool = True
-    supported_actions: List = field(default_factory=list)
+    supported_actions: List = field(default_factory=list)  # Ex ["ban", "captcha"] Action types from Crowdsec policies.
     vcl_by_action: Dict[str, VCL] = field(default_factory=dict)
-    static_vcls: List[VCL] = field(default_factory=list)
-    current_conditional_by_action: Dict[str, str] = field(default_factory=dict)
-    countries_by_action: Dict[str, Set[str]] = field(default_factory=dict)
-    autonomoussystems_by_action: Dict[str, Set[str]] = field(default_factory=dict)
+    static_vcls: List[VCL] = field(default_factory=list)  # BDC Not in use, related to recaptcha
+    current_conditional_by_action: Dict[str, str] = field(default_factory=dict)  # BDC Not in use
+    countries_by_action: Dict[str, Set[str]] = field(default_factory=dict)  # BDC Not in use
+    autonomoussystems_by_action: Dict[str, Set[str]] = field(default_factory=dict)  # BDC Not in use
     acl_collection_by_action: Dict[str, ACLCollection] = field(default_factory=dict)
 
     @classmethod
@@ -393,6 +403,8 @@ class Service:
                 new_acl_state_by_action[action].add(item)
 
         for action, expected_acl_state in new_acl_state_by_action.items():
+            # TODO At this point the state of the Service is changed but not in fastly
+            # These need to happen as an atomic operation per ACL.
             self.acl_collection_by_action[action].transform_to_state(expected_acl_state)
 
         for action in self.supported_actions:
@@ -472,3 +484,10 @@ class Service:
             ]
         )
         return f"if ( {condition} )"
+
+
+    async def reload_acls(self):
+        async with trio.open_nursery() as n:
+            for action, acl_col in self.acl_collection_by_action.items():
+                n.start_soon(acl_col.refresh_from_fastly)
+        logger.info(f"Done reloading ACLS for {self.service_id}")
