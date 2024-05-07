@@ -274,7 +274,7 @@ class FastlyAPI:
         resp.json()
         return vcl
 
-    async def refresh_acl_entries(self, acl: ACL) -> Dict[str, str]:
+    async def refresh_acl_entries(self, acl: ACL) -> None:
         resp = await self.session.get(
             self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page={ACL_BATCH_SIZE}")
         )
@@ -282,7 +282,6 @@ class FastlyAPI:
         acl.entries = {}
         for entry in resp:
             acl.entries[f"{entry['ip']}/{entry['subnet']}"] = entry["id"]
-        return acl
 
     async def process_acl(self, acl: ACL):
         logger.debug(with_suffix(f"entries to delete {acl.entries_to_delete}", acl_id=acl.id))
@@ -317,7 +316,7 @@ class FastlyAPI:
                     self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries"),
                 )
 
-        acl = await self.refresh_acl_entries(acl)
+        await self.refresh_acl_entries(acl)
         # TODO BUG: the acls are updated but the service state is not
 
     @staticmethod
