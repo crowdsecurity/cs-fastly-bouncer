@@ -144,7 +144,17 @@ async def setup_service(
     )
 
     acl_collection_by_action = {}
-    for action in SUPPORTED_ACTIONS:
+
+    if service_cfg.supported_actions:
+        if any(map(lambda act: act not in SUPPORTED_ACTIONS, service_cfg.supported_actions)):
+            logger.error(f"Ignoring supported_actions of {service_cfg.supported_actions}: includes invalid actions")
+            supported_actions = SUPPORTED_ACTIONS
+        else:
+            supported_actions = service_cfg.supported_actions
+    else:
+        supported_actions = SUPPORTED_ACTIONS
+
+    for action in supported_actions:
         sender, receiver = trio.open_memory_channel(0)
         async with trio.open_nursery() as n:
             async with sender:
@@ -171,6 +181,7 @@ async def setup_service(
             version=version,
             activate=service_cfg.activate,
             captcha_expiry_duration=service_cfg.captcha_cookie_expiry_duration,
+            supported_actions=service_cfg.supported_actions,
         )
         await s.create_static_vcls()
         await sender_chan.send(s)
