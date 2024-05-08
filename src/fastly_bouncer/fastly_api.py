@@ -284,8 +284,8 @@ class FastlyAPI:
             acl.entries[f"{entry['ip']}/{entry['subnet']}"] = entry["id"]
 
     async def process_acl(self, acl: ACL):
-        logger.debug(with_suffix(f"entries to delete {acl.entries_to_delete}", acl_id=acl.id))
-        logger.debug(with_suffix(f"entries to add {acl.entries_to_add}", acl_id=acl.id))
+        logger.debug(with_suffix(f"entries to delete %s", acl_id=acl.id), acl.entries_to_delete)
+        logger.debug(with_suffix(f"entries to add %s", acl_id=acl.id), acl.entries_to_add)
         update_entries = []
         for entry_to_add in acl.entries_to_add:
             if entry_to_add in acl.entries:

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Set
 
 import trio
+from httpx import HTTPError
 
 from fastly_bouncer import vcl_templates
 from fastly_bouncer.fastly_api import ACL, VCL, FastlyAPI
@@ -70,36 +71,32 @@ class ACLCollection:
                     acls.append(acl)
         return acls
 
-    def insert_item(self, item: str) -> bool:
+    def stage_insert_item(self, item: str) -> bool:
         """
-        Returns True if the item was successfully allocated in an ACL
+        Returns True if the item was staged in an ACL, False if all the ACLs are full.
         """
         # Check if item is already present in some ACL
         for acl in self.acls:
             if not acl.is_full():
                 acl.entries_to_add.add(item)
                 acl.entry_count += 1
-                self.state.add(item)
                 return True
         return False
 
-    def remove_item(self, item: str) -> bool:
+    def stage_remove_item(self, item: str) -> bool:
         """
-        Returns True if item is found, and removed.
+        Returns True if item is found, and staged for removal.
         """
         for acl in self.acls:
             if item not in acl.entries:
                 continue
             acl.entries_to_delete.add(item)
-            self.state.discard(item)
             acl.entry_count -= 1
             return True
         return False
 
     def transform_to_state(self, new_state):
-        """ TODO: Change this so it is atomic in that if the change at fastly fails, the state does not transform.
-        When the transform and commit are not an atomic operation, failures in the fastly HTTP calls can leave the
-        state incorrect."""
+        """Stages change alter `self` to be in `new_state` but does not send to fastly or change `self.state`."""
         new_items = new_state - self.state
         expired_items = self.state - new_state
         if new_items:
@@ -124,8 +121,8 @@ class ACLCollection:
             if any([new_item in acl.entries for acl in self.acls]):
                 continue
 
-            if not self.insert_item(new_item):
-                logger.warn(
+            if not self.stage_insert_item(new_item):
+                logger.error(
                     with_suffix(
                         f"acl_collection for {self.action} is full. Ignoring remaining items.",
                         service_id=self.service_id,
@@ -134,23 +131,33 @@ class ACLCollection:
                 break
 
         for expired_item in expired_items:
-            self.remove_item(expired_item)
+            if not self.stage_remove_item(expired_item):
+                logger.debug(with_suffix(f"{expired_item} not found in acl_collection. Ignoring.",
+                        service_id=self.service_id))
+
+        # at this point changes are staged in the ACLs but not yet sent to Fastly or changed in `ACLCollection.state`
 
     async def commit(self) -> None:
-        acls_to_change = list(
-            filter(lambda acl: acl.entries_to_add or acl.entries_to_delete, self.acls)
-        )
+        """Make changes go live.
+        Send the changes stored in `self.acls.entries_to_add` and `self.acls.entries_to_delete` to Fastly and
+        update `self.state`."""
+        acls_to_change = list(filter(lambda acl: acl.entries_to_add or acl.entries_to_delete, self.acls))
 
         if len(acls_to_change):
             async with trio.open_nursery() as n:
                 for acl in acls_to_change:
-                    n.start_soon(self.update_acl, acl)
+                    n.start_soon(self.commit_acl, acl)
             logger.info(
                 with_suffix(
                     f"acl collection for {self.action} updated",
                     service_id=self.service_id,
                 )
             )
+
+            try:
+                await self.refresh_from_fastly(acls_to_change)
+            except HTTPError as exc:
+                logger.warning(f"Could not refresh ACL {acl.name} with {exc.request.url} - {exc}")
 
     def generate_conditions(self) -> str:
         conditions = []
@@ -159,31 +166,42 @@ class ACLCollection:
 
         return " || ".join(conditions)
 
-    async def update_acl(self, acl: ACL):
+    async def commit_acl(self, acl: ACL):
+        """Sends changes to Fastly and updates `self.state` for this single `acl`."""
         logger.debug(
             with_suffix(
-                f"commiting changes to acl {acl.name}",
+                f"commiting changes to acl {acl.name} to fastly",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
         )
         await self.api.process_acl(acl)
+        self.state.difference_update(acl.entries_to_delete)
+        self.state.update(acl.entries_to_add)
+        acl.entries_to_add = set()
+        acl.entries_to_delete = set()
+
         logger.debug(
             with_suffix(
-                f"commited changes to acl {acl.name}",
+                f"finished commiting changes to acl {acl.name} to fastly, state updated",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
         )
-        acl.entries_to_add = set()
-        acl.entries_to_delete = set()
 
-    async def refresh_from_fastly(self):
+
+    async def refresh_from_fastly(self, acls: List[ACL]=[]) -> None:
+        """Get data for ACLs from fastly and rebuild state."""
+        if not acls:
+            acls_to_refresh = self.acls
+        else:
+            acls_to_refresh = acls
+
         async with trio.open_nursery() as n:
-            for acl in self.acls:
-                    n.start_soon(self.api.refresh_acl_entries, acl)
+            for acl in acls_to_refresh:
+                n.start_soon(self.api.refresh_acl_entries, acl)
 
-        self.state = set().union(*[acl.as_set() for acl in self.acls])
+        self.state = set().union(*[acl.as_set() for acl in acls_to_refresh])
 
 
 @dataclass
@@ -403,8 +421,6 @@ class Service:
                 new_acl_state_by_action[action].add(item)
 
         for action, expected_acl_state in new_acl_state_by_action.items():
-            # TODO At this point the state of the Service is changed but not in fastly
-            # These need to happen as an atomic operation per ACL.
             self.acl_collection_by_action[action].transform_to_state(expected_acl_state)
 
         for action in self.supported_actions:
