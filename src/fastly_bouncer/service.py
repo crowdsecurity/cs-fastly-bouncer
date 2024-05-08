@@ -4,10 +4,12 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Set
 
 import trio
+from httpx import HTTPError
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_result
 
 from fastly_bouncer import vcl_templates
 from fastly_bouncer.fastly_api import ACL, VCL, FastlyAPI
-from fastly_bouncer.utils import with_suffix
+from fastly_bouncer.utils import with_suffix, transient_http_error
 
 logger: logging.Logger = logging.getLogger("")
 
@@ -29,10 +31,10 @@ class ACLCollection:
     ):
         self.acls: List[ACL] = acls
         self.api: FastlyAPI = api
-        self.service_id = service_id
-        self.version = version
-        self.action = action
-        self.state: Set = state
+        self.service_id = service_id  # Fastly service ID
+        self.version = version # Fastly version ID, probably of first time it was added and doesn't change
+        self.action = action  # "ban" "captcha" etc
+        self.state: Set = state  # All the "ip/subnet" for the ACLCollection
 
     def as_jsonable_dict(self) -> Dict:
         return {
@@ -70,33 +72,32 @@ class ACLCollection:
                     acls.append(acl)
         return acls
 
-    def insert_item(self, item: str) -> bool:
+    def stage_insert_item(self, item: str) -> bool:
         """
-        Returns True if the item was successfully allocated in an ACL
+        Returns True if the item was staged in an ACL, False if all the ACLs are full.
         """
         # Check if item is already present in some ACL
         for acl in self.acls:
             if not acl.is_full():
                 acl.entries_to_add.add(item)
                 acl.entry_count += 1
-                self.state.add(item)
                 return True
         return False
 
-    def remove_item(self, item: str) -> bool:
+    def stage_remove_item(self, item: str) -> bool:
         """
-        Returns True if item is found, and removed.
+        Returns True if item is found, and staged for removal.
         """
         for acl in self.acls:
             if item not in acl.entries:
                 continue
             acl.entries_to_delete.add(item)
-            self.state.discard(item)
             acl.entry_count -= 1
             return True
         return False
 
     def transform_to_state(self, new_state):
+        """Stages change alter `self` to be in `new_state` but does not send to fastly or change `self.state`."""
         new_items = new_state - self.state
         expired_items = self.state - new_state
         if new_items:
@@ -121,8 +122,8 @@ class ACLCollection:
             if any([new_item in acl.entries for acl in self.acls]):
                 continue
 
-            if not self.insert_item(new_item):
-                logger.warn(
+            if not self.stage_insert_item(new_item):
+                logger.error(
                     with_suffix(
                         f"acl_collection for {self.action} is full. Ignoring remaining items.",
                         service_id=self.service_id,
@@ -131,23 +132,33 @@ class ACLCollection:
                 break
 
         for expired_item in expired_items:
-            self.remove_item(expired_item)
+            if not self.stage_remove_item(expired_item):
+                logger.debug(with_suffix(f"{expired_item} not found in acl_collection. Ignoring.",
+                        service_id=self.service_id))
+
+        # at this point changes are staged in the ACLs but not yet sent to Fastly or changed in `ACLCollection.state`
 
     async def commit(self) -> None:
-        acls_to_change = list(
-            filter(lambda acl: acl.entries_to_add or acl.entries_to_delete, self.acls)
-        )
+        """Make changes go live.
+        Send the changes stored in `self.acls.entries_to_add` and `self.acls.entries_to_delete` to Fastly and
+        update `self.state`."""
+        acls_to_change = list(filter(lambda acl: acl.entries_to_add or acl.entries_to_delete, self.acls))
 
         if len(acls_to_change):
             async with trio.open_nursery() as n:
                 for acl in acls_to_change:
-                    n.start_soon(self.update_acl, acl)
+                    n.start_soon(self.commit_acl, acl)
             logger.info(
                 with_suffix(
                     f"acl collection for {self.action} updated",
                     service_id=self.service_id,
                 )
             )
+
+            try:
+                await self.refresh_from_fastly(acls_to_change)
+            except HTTPError as exc:
+                logger.warning(f"Could not refresh ACL {acl.name} with {exc.request.url} - {exc}")
 
     def generate_conditions(self) -> str:
         conditions = []
@@ -156,24 +167,107 @@ class ACLCollection:
 
         return " || ".join(conditions)
 
-    async def update_acl(self, acl: ACL):
+
+    @retry(wait=wait_exponential(multiplier=1, min=2, max=10),
+           stop=stop_after_attempt(10),
+           retry=retry_if_result(transient_http_error))
+    async def _commit_acl_diff(self, acl: ACL):
         logger.debug(
             with_suffix(
-                f"commiting changes to acl {acl.name}",
+                f"commiting changes to acl {acl.name} to fastly",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
         )
         await self.api.process_acl(acl)
+
+        self.state.difference_update(acl.entries_to_delete)
+        self.state.update(acl.entries_to_add)
+        acl.entries_to_add = set()
+        acl.entries_to_delete = set()
         logger.debug(
             with_suffix(
-                f"commited changes to acl {acl.name}",
+                f"finished commiting changes to acl {acl.name} to fastly, state updated",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
         )
+
+    @retry(wait=wait_exponential(multiplier=1, min=2, max=10),
+           stop=stop_after_attempt(10),
+           retry=retry_if_result(transient_http_error))
+    async def _refresh_then_commit(self, acl: ACL):
+        logger.debug(
+            with_suffix(
+                f"refreshing acl {acl.name} from fastly",
+                service_id=self.service_id,
+                acl_collection=self.action,
+            )
+        )
+        await self.api.refresh_acl_entries(acl)
+        current = acl.as_set()
+
+        # if we have an add, and it exists at Fastly, we don't want to add it again at fastly,
+        # but we still need to put it in self.state.
+        state_add = acl.entries_to_add.copy()
+        acl.entries_to_add.difference_update(current)
+
+        # if we have a delete, and it doesn't exist at Fastly, don't want to add it again or Fasty will 400
+        # but we still need to remove it from self.state
+        state_delete = acl.entries_to_delete.copy()
+        acl.entries_to_delete = current & acl.entries_to_delete
+
+        logger.info(with_suffix(f"{acl.name} local state refreshed, out of sync repaired",
+                                service_id=self.service_id))
+
+        logger.debug(
+            with_suffix(
+                f"commiting changes to acl {acl.name} to fastly",
+                service_id=self.service_id,
+                acl_collection=self.action,
+            )
+        )
+        await self.api.process_acl(acl)
+
+        self.state.difference_update(state_delete)
+        self.state.update(state_add)
         acl.entries_to_add = set()
         acl.entries_to_delete = set()
+
+        logger.debug(
+            with_suffix(
+                f"finished refresh of acl {acl.name} and changes sent to fastly",
+                service_id=self.service_id,
+                acl_collection=self.action,
+            )
+        )
+
+    async def commit_acl(self, acl: ACL):
+        """Sends changes to Fastly and updates `self.state` for this single `acl`."""
+        try:
+            await self._commit_acl_diff(acl)
+        except* HTTPError as exc:
+            httpexc = exc.split(HTTPError)[0].exceptions[0]
+            if httpexc.response.status_code == 400:
+                logger.info(with_suffix(f"{acl.name} local state out of sync with fastly,"
+                                        f"msg: '{httpexc.response.text}'", service_id=self.service_id))
+                await self._refresh_then_commit(acl)
+            else:
+                raise exc
+
+
+    async def refresh_from_fastly(self, acls: List[ACL]=[]) -> None:
+        """Get data for ACLs from fastly and rebuild state."""
+        if not acls:
+            acls_to_refresh = self.acls
+        else:
+            acls_to_refresh = acls
+
+        async with trio.open_nursery() as n:
+            for acl in acls_to_refresh:
+                n.start_soon(self.api.refresh_acl_entries, acl)
+
+        self.state = set().union(*[acl.as_set() for acl in acls_to_refresh])
 
 
 @dataclass
@@ -186,12 +280,12 @@ class Service:
     activate: bool
     captcha_expiry_duration: str = "1800"
     _first_time: bool = True
-    supported_actions: List = field(default_factory=list)
+    supported_actions: List = field(default_factory=list)  # Ex ["ban", "captcha"] Action types from Crowdsec policies.
     vcl_by_action: Dict[str, VCL] = field(default_factory=dict)
-    static_vcls: List[VCL] = field(default_factory=list)
-    current_conditional_by_action: Dict[str, str] = field(default_factory=dict)
-    countries_by_action: Dict[str, Set[str]] = field(default_factory=dict)
-    autonomoussystems_by_action: Dict[str, Set[str]] = field(default_factory=dict)
+    static_vcls: List[VCL] = field(default_factory=list)  # BDC Not in use, related to recaptcha
+    current_conditional_by_action: Dict[str, str] = field(default_factory=dict)  # BDC Not in use
+    countries_by_action: Dict[str, Set[str]] = field(default_factory=dict)  # BDC Not in use
+    autonomoussystems_by_action: Dict[str, Set[str]] = field(default_factory=dict)  # BDC Not in use
     acl_collection_by_action: Dict[str, ACLCollection] = field(default_factory=dict)
 
     @classmethod
@@ -472,3 +566,10 @@ class Service:
             ]
         )
         return f"if ( {condition} )"
+
+
+    async def reload_acls(self):
+        async with trio.open_nursery() as n:
+            for action, acl_col in self.acl_collection_by_action.items():
+                n.start_soon(acl_col.refresh_from_fastly)
+        logger.info(f"Done reloading ACLS for {self.service_id}")

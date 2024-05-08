@@ -15,8 +15,8 @@ from fastly_bouncer.utils import with_suffix
 logger: logging.Logger = logging.getLogger("")
 
 
-ACL_CAPACITY = 100
-
+ACL_CAPACITY = 1000 # as of 2024-05
+ACL_BATCH_SIZE = 1000 # as of 2024-05
 
 @dataclass
 class ACL:
@@ -47,6 +47,8 @@ class ACL:
             "created": self.created,
         }
 
+    def as_set(self) -> Set[str]:
+        return set([ip_subnet for ip_subnet, _ in self.entries.items()])
 
 @dataclass
 class VCL:
@@ -78,7 +80,9 @@ class VCL:
 
 
 async def raise_on_4xx_5xx(response):
-    response.raise_for_status()
+    if response.is_error:
+        await response.aread()
+        response.raise_for_status()
 
 
 class FastlyAPI:
@@ -97,7 +101,7 @@ class FastlyAPI:
     async def get_version_to_clone(self, service_id: str) -> str:
         """
         Gets the version to clone from. If service has active version, then the active version will be cloned.
-        Else the the version which was last updated would be cloned
+        Else the version which was last updated would be cloned
         """
 
         service_versions_resp = await self.session.get(
@@ -272,19 +276,18 @@ class FastlyAPI:
         resp.json()
         return vcl
 
-    async def refresh_acl_entries(self, acl: ACL) -> Dict[str, str]:
+    async def refresh_acl_entries(self, acl: ACL) -> None:
         resp = await self.session.get(
-            self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page=100")
+            self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page={ACL_BATCH_SIZE}")
         )
         resp = resp.json()
         acl.entries = {}
         for entry in resp:
             acl.entries[f"{entry['ip']}/{entry['subnet']}"] = entry["id"]
-        return acl
 
     async def process_acl(self, acl: ACL):
-        logger.debug(with_suffix(f"entries to delete {acl.entries_to_delete}", acl_id=acl.id))
-        logger.debug(with_suffix(f"entries to add {acl.entries_to_add}", acl_id=acl.id))
+        logger.debug(with_suffix(f"entries to delete %s", acl_id=acl.id), acl.entries_to_delete)
+        logger.debug(with_suffix(f"entries to add %s", acl_id=acl.id), acl.entries_to_add)
         update_entries = []
         for entry_to_add in acl.entries_to_add:
             if entry_to_add in acl.entries:
@@ -304,18 +307,16 @@ class FastlyAPI:
         if not update_entries:
             return
 
-        # Only 100 operations per request can be done on an acl.
+        # Only ACL_BATCH_SIZE operations per request can be done on an acl.
         async with trio.open_nursery() as n:
-            for i in range(0, len(update_entries), 100):
-                update_entries_batch = update_entries[i : i + 100]
+            for i in range(0, len(update_entries), ACL_BATCH_SIZE):
+                update_entries_batch = update_entries[i : i + ACL_BATCH_SIZE]
                 request_body = {"entries": update_entries_batch}
                 f = partial(self.session.patch, json=request_body)
                 n.start_soon(
                     f,
                     self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries"),
                 )
-
-        acl = await self.refresh_acl_entries(acl)
 
     @staticmethod
     def api_url(endpoint: str) -> str:
