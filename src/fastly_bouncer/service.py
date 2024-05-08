@@ -5,10 +5,11 @@ from typing import Dict, Iterable, List, Set
 
 import trio
 from httpx import HTTPError
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_result
 
 from fastly_bouncer import vcl_templates
 from fastly_bouncer.fastly_api import ACL, VCL, FastlyAPI
-from fastly_bouncer.utils import with_suffix
+from fastly_bouncer.utils import with_suffix, transient_http_error
 
 logger: logging.Logger = logging.getLogger("")
 
@@ -166,8 +167,11 @@ class ACLCollection:
 
         return " || ".join(conditions)
 
-    async def commit_acl(self, acl: ACL):
-        """Sends changes to Fastly and updates `self.state` for this single `acl`."""
+
+    @retry(wait=wait_exponential(multiplier=1, min=2, max=10),
+           stop=stop_after_attempt(10),
+           retry=retry_if_result(transient_http_error))
+    async def _commit_acl_diff(self, acl: ACL):
         logger.debug(
             with_suffix(
                 f"commiting changes to acl {acl.name} to fastly",
@@ -176,11 +180,11 @@ class ACLCollection:
             )
         )
         await self.api.process_acl(acl)
+
         self.state.difference_update(acl.entries_to_delete)
         self.state.update(acl.entries_to_add)
         acl.entries_to_add = set()
         acl.entries_to_delete = set()
-
         logger.debug(
             with_suffix(
                 f"finished commiting changes to acl {acl.name} to fastly, state updated",
@@ -188,6 +192,68 @@ class ACLCollection:
                 acl_collection=self.action,
             )
         )
+
+    @retry(wait=wait_exponential(multiplier=1, min=2, max=10),
+           stop=stop_after_attempt(10),
+           retry=retry_if_result(transient_http_error))
+    async def _refresh_then_commit(self, acl: ACL):
+        logger.debug(
+            with_suffix(
+                f"refreshing acl {acl.name} from fastly",
+                service_id=self.service_id,
+                acl_collection=self.action,
+            )
+        )
+        await self.api.refresh_acl_entries(acl)
+        current = acl.as_set()
+
+        # if we have an add, and it exists at Fastly, we don't want to add it again at fastly,
+        # but we still need to put it in self.state.
+        state_add = acl.entries_to_add.copy()
+        acl.entries_to_add.difference_update(current)
+
+        # if we have a delete, and it doesn't exist at Fastly, don't want to add it again or Fasty will 400
+        # but we still need to remove it from self.state
+        state_delete = acl.entries_to_delete.copy()
+        acl.entries_to_delete = current & acl.entries_to_delete
+
+        logger.info(with_suffix(f"{acl.name} local state refreshed, out of sync repaired",
+                                service_id=self.service_id))
+
+        logger.debug(
+            with_suffix(
+                f"commiting changes to acl {acl.name} to fastly",
+                service_id=self.service_id,
+                acl_collection=self.action,
+            )
+        )
+        await self.api.process_acl(acl)
+
+        self.state.difference_update(state_delete)
+        self.state.update(state_add)
+        acl.entries_to_add = set()
+        acl.entries_to_delete = set()
+
+        logger.debug(
+            with_suffix(
+                f"finished refresh of acl {acl.name} and changes sent to fastly",
+                service_id=self.service_id,
+                acl_collection=self.action,
+            )
+        )
+
+    async def commit_acl(self, acl: ACL):
+        """Sends changes to Fastly and updates `self.state` for this single `acl`."""
+        try:
+            await self._commit_acl_diff(acl)
+        except* HTTPError as exc:
+            httpexc = exc.split(HTTPError)[0].exceptions[0]
+            if httpexc.response.status_code == 400:
+                logger.info(with_suffix(f"{acl.name} local state out of sync with fastly,"
+                                        f"msg: '{httpexc.response.text}'", service_id=self.service_id))
+                await self._refresh_then_commit(acl)
+            else:
+                raise exc
 
 
     async def refresh_from_fastly(self, acls: List[ACL]=[]) -> None:

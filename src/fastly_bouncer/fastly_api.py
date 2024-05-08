@@ -80,7 +80,9 @@ class VCL:
 
 
 async def raise_on_4xx_5xx(response):
-    response.raise_for_status()
+    if response.is_error:
+        await response.aread()
+        response.raise_for_status()
 
 
 class FastlyAPI:
@@ -99,7 +101,7 @@ class FastlyAPI:
     async def get_version_to_clone(self, service_id: str) -> str:
         """
         Gets the version to clone from. If service has active version, then the active version will be cloned.
-        Else the the version which was last updated would be cloned
+        Else the version which was last updated would be cloned
         """
 
         service_versions_resp = await self.session.get(
@@ -315,9 +317,6 @@ class FastlyAPI:
                     f,
                     self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries"),
                 )
-
-        await self.refresh_acl_entries(acl)
-        # TODO BUG: the acls are updated but the service state is not
 
     @staticmethod
     def api_url(endpoint: str) -> str:

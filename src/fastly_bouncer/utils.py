@@ -2,6 +2,8 @@ import logging
 import sys
 from importlib.metadata import version
 
+from httpx import HTTPError, RequestError, HTTPStatusError
+
 SUPPORTED_ACTIONS = ["ban", "captcha"]
 VERSION = version("crowdsec-fastly-bouncer")
 
@@ -39,3 +41,14 @@ def get_default_logger():
     default_handler.setFormatter(default_formatter)
     logger.addHandler(default_handler)
     return logger
+
+
+def transient_http_error(value: Exception) -> bool:
+    if isinstance(value, RequestError):
+        return True
+    if isinstance(value, HTTPStatusError):
+        if value.request.status_code > 500:
+            return True
+        else:
+            return value.request.status_code == 429
+

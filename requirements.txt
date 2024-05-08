@@ -3,3 +3,4 @@ httpx
 trio
 python-dateutil
 pycrowdsec
+tenacity
