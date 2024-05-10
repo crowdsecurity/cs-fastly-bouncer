@@ -32,6 +32,7 @@ from fastly_bouncer.utils import (
 logger: logging.Logger = get_default_logger()
 
 exiting = False
+reload_acls = "start up"
 
 
 def sigterm_signal_handler(signum, frame):
@@ -42,6 +43,14 @@ def sigterm_signal_handler(signum, frame):
 
 signal.signal(signal.SIGTERM, sigterm_signal_handler)
 signal.signal(signal.SIGINT, sigterm_signal_handler)
+
+
+def sighup_signal_handler(signum, frame):
+    global reload_acls
+    reload_acls = "signal"
+
+
+signal.signal(signal.SIGHUP, sighup_signal_handler)
 
 
 async def setup_action_for_service(
@@ -135,7 +144,17 @@ async def setup_service(
     )
 
     acl_collection_by_action = {}
-    for action in SUPPORTED_ACTIONS:
+
+    if service_cfg.supported_actions:
+        if any(map(lambda act: act not in SUPPORTED_ACTIONS, service_cfg.supported_actions)):
+            logger.error(f"Ignoring supported_actions of {service_cfg.supported_actions}: includes invalid actions")
+            supported_actions = SUPPORTED_ACTIONS
+        else:
+            supported_actions = service_cfg.supported_actions
+    else:
+        supported_actions = SUPPORTED_ACTIONS
+
+    for action in supported_actions:
         sender, receiver = trio.open_memory_channel(0)
         async with trio.open_nursery() as n:
             async with sender:
@@ -162,6 +181,7 @@ async def setup_service(
             version=version,
             activate=service_cfg.activate,
             captcha_expiry_duration=service_cfg.captcha_cookie_expiry_duration,
+            supported_actions=service_cfg.supported_actions,
         )
         await s.create_static_vcls()
         await sender_chan.send(s)
@@ -195,7 +215,7 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
             else:
                 cache = json.loads(s)
                 services = list(map(Service.from_jsonable_dict, cache["service_states"]))
-                logger.info(f"loaded exisitng infra using cache")
+                logger.info(f"loaded existing infra using cache")
                 if not cleanup_mode:
                     return services
     else:
@@ -236,7 +256,7 @@ def set_logger(config: Config):
 
 
 async def run(config: Config, services: List[Service]):
-    global VERSION
+    global VERSION, reload_acls
     crowdsec_client = StreamClient(
         lapi_url=config.crowdsec_config.lapi_url,
         api_key=config.crowdsec_config.lapi_key,
@@ -251,17 +271,23 @@ async def run(config: Config, services: List[Service]):
     while True and not exiting:
         new_state = crowdsec_client.get_current_decisions()
 
+        if reload_acls:
+            logger.info(f"Reload of ACLS triggered by {reload_acls}")
+            reload_acls = False
+            for s in services:
+                await s.reload_acls()
+
         async with trio.open_nursery() as n:
             for s in services:
                 n.start_soon(s.transform_state, new_state)
 
         new_states = list(map(lambda service: service.as_jsonable_dict(), services))
         if new_states != previous_states:
-            logger.debug("updating cache")
+            logger.debug("writing updated cache of fastly state")
             new_cache = {"service_states": new_states, "bouncer_version": VERSION}
             async with await trio.open_file(config.cache_path, "w") as f:
                 await f.write(json.dumps(new_cache, indent=4))
-            logger.debug("done updating cache")
+            logger.debug("done writing updated cache of fastly state")
             previous_states = new_states
 
         if exiting:
