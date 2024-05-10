@@ -7,7 +7,7 @@ import trio
 import yaml
 
 from fastly_bouncer.fastly_api import FastlyAPI
-from fastly_bouncer.utils import are_filled_validator, VERSION
+from fastly_bouncer.utils import are_filled_validator, VERSION, SUPPORTED_ACTIONS
 
 
 @dataclass
@@ -29,6 +29,7 @@ class FastlyServiceConfig:
     activate: bool = False
     max_items: int = 20000
     captcha_cookie_expiry_duration: str = "1800"
+    supported_actions: List = field(default_factory=list)
 
     def __post_init__(self):
         are_filled_validator(**{key: getattr(self, key) for key in asdict(self).keys()})
@@ -171,6 +172,7 @@ class ConfigGenerator:
                     activate=False,
                     clone_reference_version=True,
                     reference_version=ref_version,
+                    supported_actions=SUPPORTED_ACTIONS,
                 )
             )
 
