@@ -5,6 +5,7 @@ from typing import Dict, List
 
 import trio
 import yaml
+import sys
 
 from fastly_bouncer.fastly_api import FastlyAPI
 from fastly_bouncer.utils import are_filled_validator, VERSION
@@ -143,9 +144,9 @@ class ConfigGenerator:
                 continue
 
             if "clone_reference_version:" in line:
-                lines[
-                    i
-                ] = f"{line}  # Set to false, to modify 'reference_version' instead of cloning it "
+                lines[i] = (
+                    f"{line}  # Set to false, to modify 'reference_version' instead of cloning it "
+                )
                 continue
 
             if "reference_version:" in line:
@@ -153,9 +154,9 @@ class ConfigGenerator:
                 continue
 
             if "captcha_cookie_expiry_duration" in line:
-                lines[
-                    i
-                ] = f"{line}  # Duration(in second) to persist the cookie containing proof of solving captcha"
+                lines[i] = (
+                    f"{line}  # Duration(in second) to persist the cookie containing proof of solving captcha"
+                )
                 continue
 
         return "\n".join(lines)
@@ -201,5 +202,6 @@ def print_config(cfg, o_arg):
     if not o_arg:
         print(cfg)
     else:
+        print(f"Writing config to {o_arg}", file=sys.stdout)
         with open(o_arg, "w") as f:
             f.write(cfg)

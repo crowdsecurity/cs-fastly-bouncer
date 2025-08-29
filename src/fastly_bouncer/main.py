@@ -195,7 +195,7 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
             else:
                 cache = json.loads(s)
                 services = list(map(Service.from_jsonable_dict, cache["service_states"]))
-                logger.info(f"loaded exisitng infra using cache")
+                logger.info(f"loaded existing infra using cache")
                 if not cleanup_mode:
                     return services
     else:
@@ -288,42 +288,39 @@ def main():
     arg_parser.add_argument(
         "-c",
         type=Path,
-        help="Path to configuration file.",
-        default=Path("/etc/crowdsec/bouncers/crowdsec-fastly-bouncer.yaml"),
+        help="Path to configuration file."
     )
     arg_parser.add_argument("-d", help="Whether to cleanup resources.", action="store_true")
     arg_parser.add_argument("-g", type=str, help="Comma separated tokens to generate config for.")
     arg_parser.add_argument("-o", type=str, help="Path to file to output the generated config.")
     arg_parser.add_help = True
     args = arg_parser.parse_args()
-    if not args.c or not args.c.exists():
+    if not args.g and (not args.c or not args.c.exists()):
         if not args.c:
             print("config file not provided", file=sys.stderr)
         else:
-            print(f"config at {args.c} doesn't exist", file=sys.stderr)
-        if args.g:
-            gc = trio.run(ConfigGenerator().generate_config, args.g)
-            print_config(gc, args.o)
-            sys.exit(0)
+            if args.c and not args.c.exists():
+                print(f"config at {args.c} doesn't exist", file=sys.stderr)
 
         arg_parser.print_help()
         sys.exit(1)
-    try:
-        config = parse_config_file(args.c)
-        if args.d or args.c:  # We want to display this to stderr
-            config.log_mode = "stderr"
-        set_logger(config)
-    except Exception as e:
-        logger.error(f"got error {e} while parsing config at {args.c}")
-        sys.exit(1)
 
-    if args.g:
-        gc = trio.run(ConfigGenerator().generate_config, args.g, config)
+    if not args.g:
+        try:
+            config = parse_config_file(args.c)
+            set_logger(config)
+            logger.info("parsed config successfully")
+            trio.run(start, config, args.d)
+        except Exception as e:
+            logger.error(f"got error {e} while parsing config at {args.c}")
+            sys.exit(1)
+
+    else:
+        gc = trio.run(ConfigGenerator().generate_config, args.g)
         print_config(gc, args.o)
         sys.exit(0)
 
-    logger.info("parsed config successfully")
-    trio.run(start, config, args.d)
+
 
 
 if __name__ == "__main__":

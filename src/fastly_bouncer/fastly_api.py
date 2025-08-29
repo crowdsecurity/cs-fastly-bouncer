@@ -15,7 +15,7 @@ from fastly_bouncer.utils import with_suffix
 logger: logging.Logger = logging.getLogger("")
 
 
-ACL_CAPACITY = 100
+ACL_CAPACITY = 1000
 
 
 @dataclass
@@ -96,8 +96,8 @@ class FastlyAPI:
 
     async def get_version_to_clone(self, service_id: str) -> str:
         """
-        Gets the version to clone from. If service has active version, then the active version will be cloned.
-        Else the the version which was last updated would be cloned
+        Gets the version to clone from. If the service has an active version, then the active version will be cloned.
+        Else the version which was last updated would be cloned
         """
 
         service_versions_resp = await self.session.get(
