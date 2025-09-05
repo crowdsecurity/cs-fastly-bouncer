@@ -197,6 +197,59 @@ class ConfigGenerator:
 
         return FastlyAccountConfig(account_token=fastly_token, services=service_configs)
 
+    @staticmethod
+    async def edit_config(comma_separated_fastly_tokens: str, existing_config: Config) -> str:
+        fastly_tokens = comma_separated_fastly_tokens.split(",")
+        fastly_tokens = list(map(lambda token: token.strip(), fastly_tokens))
+        
+        # Generate new config with fresh data from tokens
+        new_config = Config(
+            log_level=existing_config.log_level,
+            log_mode=existing_config.log_mode,
+            log_file=existing_config.log_file,
+            update_frequency=existing_config.update_frequency,
+            crowdsec_config=existing_config.crowdsec_config,
+            cache_path=existing_config.cache_path,
+            bouncer_version=existing_config.bouncer_version,
+        )
+        
+        # Generate fresh account configs with new tokens
+        for token in fastly_tokens:
+            account_cfg = await ConfigGenerator.generate_config_for_account(token)
+            new_config.fastly_account_configs.append(account_cfg)
+        
+        # Merge service configurations from existing config
+        merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
+        
+        return ConfigGenerator.add_comments(yaml.safe_dump(asdict(merged_config)))
+
+    @staticmethod
+    def merge_service_configs(existing_config: Config, new_config: Config) -> Config:
+        # Create a mapping of service_id -> existing service config
+        existing_services = {}
+        for account in existing_config.fastly_account_configs:
+            for service in account.services:
+                existing_services[service.id] = service
+        
+        # Merge configurations for each new account
+        for new_account in new_config.fastly_account_configs:
+            for i, new_service in enumerate(new_account.services):
+                if new_service.id in existing_services:
+                    existing_service = existing_services[new_service.id]
+                    # Preserve existing service configuration, only update reference_version
+                    new_account.services[i] = FastlyServiceConfig(
+                        id=new_service.id,
+                        recaptcha_site_key=existing_service.recaptcha_site_key,
+                        recaptcha_secret_key=existing_service.recaptcha_secret_key,
+                        reference_version=new_service.reference_version,  # Use latest from API
+                        clone_reference_version=existing_service.clone_reference_version,
+                        activate=existing_service.activate,
+                        max_items=existing_service.max_items,
+                        captcha_cookie_expiry_duration=existing_service.captcha_cookie_expiry_duration,
+                    )
+        
+        return new_config
+
 
 def print_config(cfg, o_arg):
     if not o_arg:

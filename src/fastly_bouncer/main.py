@@ -291,36 +291,70 @@ def main():
         help="Path to configuration file."
     )
     arg_parser.add_argument("-d", help="Whether to cleanup resources.", action="store_true")
+    arg_parser.add_argument("-e", help="Edit existing config with new tokens (requires both -g and -c).", action="store_true")
     arg_parser.add_argument("-g", type=str, help="Comma separated tokens to generate config for.")
     arg_parser.add_argument("-o", type=str, help="Path to file to output the generated config.")
     arg_parser.add_help = True
     args = arg_parser.parse_args()
-    if not args.g and (not args.c or not args.c.exists()):
-        if not args.c:
-            print("config file not provided", file=sys.stderr)
-        else:
-            if args.c and not args.c.exists():
-                print(f"config at {args.c} doesn't exist", file=sys.stderr)
-
-        arg_parser.print_help()
-        sys.exit(1)
-
-    if not args.g:
-        try:
-            config = parse_config_file(args.c)
-            set_logger(config)
-            logger.info("parsed config successfully")
-            trio.run(start, config, args.d)
-        except Exception as e:
-            logger.error(f"got error {e} while parsing config at {args.c}")
+    # Validate edit mode requirements
+    if args.e:
+        if not args.g:
+            print("Edit mode (-e) requires tokens (-g)", file=sys.stderr)
+            arg_parser.print_help()
             sys.exit(1)
-
-    else:
+        if not args.c:
+            print("Edit mode (-e) requires config file (-c)", file=sys.stderr)
+            arg_parser.print_help()
+            sys.exit(1)
+        if args.o:
+            print("Edit mode (-e) cannot be used with output file (-o)", file=sys.stderr)
+            arg_parser.print_help()
+            sys.exit(1)
+    
+    # Handle config generation
+    if args.g and not args.e:
         gc = trio.run(ConfigGenerator().generate_config, args.g)
         print_config(gc, args.o)
         sys.exit(0)
-
-
+    
+    # Handle config editing
+    if args.e:
+        if not args.c.exists():
+            print(f"config at {args.c} doesn't exist", file=sys.stderr)
+            sys.exit(1)
+        try:
+            existing_config = parse_config_file(args.c)
+            edited_config = trio.run(ConfigGenerator().edit_config, args.g, existing_config)
+            
+            # Write the edited config back to the original file
+            with open(args.c, "w") as f:
+                f.write(edited_config)
+            
+            print(f"Config successfully updated: {args.c}")
+            sys.exit(0)
+        except Exception as e:
+            print(f"got error {e} while editing config at {args.c}", file=sys.stderr)
+            sys.exit(1)
+    
+    # Handle normal run
+    if not args.g:
+        if not args.c:
+            print("config file not provided", file=sys.stderr)
+            arg_parser.print_help()
+            sys.exit(1)
+        else:
+            if not args.c.exists():
+                print(f"config at {args.c} doesn't exist", file=sys.stderr)
+                sys.exit(1)
+            else:
+                try:
+                    config = parse_config_file(args.c)
+                    set_logger(config)
+                    logger.info("parsed config successfully")
+                    trio.run(start, config, args.d)
+                except Exception as e:
+                    logger.error(f"got error {e} while parsing config at {args.c}")
+                    sys.exit(1)
 
 
 if __name__ == "__main__":
