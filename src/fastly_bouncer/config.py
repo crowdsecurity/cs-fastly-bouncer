@@ -15,9 +15,18 @@ from fastly_bouncer.utils import are_filled_validator, VERSION
 class CrowdSecConfig:
     lapi_key: str
     lapi_url: str = "http://localhost:8080/"
+    include_scenarios_containing: List[str] = field(default_factory=list)
+    exclude_scenarios_containing: List[str] = field(default_factory=list)
+    only_include_decisions_from: List[str] = field(default_factory=lambda: ["crowdsec", "cscli"])
+    insecure_skip_verify: bool = False
+    key_path: str = ""
+    cert_path: str = ""
+    ca_cert_path: str = ""
 
     def __post_init__(self):
-        are_filled_validator(**{key: getattr(self, key) for key in asdict(self).keys()})
+        # Only validate required fields (exclude optional fields that can be None)
+        required_fields = {"lapi_key": self.lapi_key, "lapi_url": self.lapi_url}
+        are_filled_validator(**required_fields)
 
 
 @dataclass
@@ -88,8 +97,19 @@ def parse_config_file(path: Path):
         raise FileNotFoundError(f"Config file at {path} doesn't exist")
     with open(path) as f:
         data = yaml.safe_load(f)
+        crowdsec_data = data["crowdsec_config"]
         return Config(
-            crowdsec_config=CrowdSecConfig(**data["crowdsec_config"]),
+            crowdsec_config=CrowdSecConfig(
+                lapi_key=crowdsec_data["lapi_key"],
+                lapi_url=crowdsec_data.get("lapi_url", "http://localhost:8080/"),
+                include_scenarios_containing=crowdsec_data.get("include_scenarios_containing", []),
+                exclude_scenarios_containing=crowdsec_data.get("exclude_scenarios_containing", []),
+                only_include_decisions_from=crowdsec_data.get("only_include_decisions_from", ["crowdsec", "cscli"]),
+                insecure_skip_verify=crowdsec_data.get("insecure_skip_verify", False),
+                key_path=crowdsec_data.get("key_path", ""),
+                cert_path=crowdsec_data.get("cert_path", ""),
+                ca_cert_path=crowdsec_data.get("ca_cert_path", ""),
+            ),
             fastly_account_configs=fastly_config_from_dict(data["fastly_account_configs"]),
             log_level=data["log_level"],
             log_mode=data["log_mode"],

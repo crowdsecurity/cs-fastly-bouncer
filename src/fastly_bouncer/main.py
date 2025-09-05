@@ -236,20 +236,55 @@ def set_logger(config: Config):
     logger.info(f"Starting fastly-bouncer-v{VERSION}")
 
 
+def buildClientParams(config:  Config):
+    global VERSION
+
+    # Build StreamClient parameters
+    client_params = {"api_key": config.crowdsec_config.lapi_key, "lapi_url": config.crowdsec_config.lapi_url,
+                     "interval": config.update_frequency, "user_agent": f"fastly-bouncer/v{VERSION}",
+                     "scopes": ("ip", "range", "country", "as"),
+                     "only_include_decisions_from": tuple(config.crowdsec_config.only_include_decisions_from)}
+
+    # Include/exclude scenarios
+    if config.crowdsec_config.include_scenarios_containing:
+        client_params["include_scenarios_containing"] = tuple(config.crowdsec_config.include_scenarios_containing)
+
+    if config.crowdsec_config.exclude_scenarios_containing:
+        client_params["exclude_scenarios_containing"] = tuple(config.crowdsec_config.exclude_scenarios_containing)
+
+    # SSL/TLS options
+    if config.crowdsec_config.insecure_skip_verify:
+        client_params["insecure_skip_verify"] = True
+
+    if config.crowdsec_config.key_path:
+        client_params["key_path"] = config.crowdsec_config.key_path
+
+    if config.crowdsec_config.cert_path:
+        client_params["cert_path"] = config.crowdsec_config.cert_path
+
+    if config.crowdsec_config.ca_cert_path:
+        client_params["ca_cert_path"] = config.crowdsec_config.ca_cert_path
+
+    return client_params
+
+
 async def run(config: Config, services: List[Service]):
     global VERSION
-    crowdsec_client = StreamClient(
-        lapi_url=config.crowdsec_config.lapi_url,
-        api_key=config.crowdsec_config.lapi_key,
-        scopes=["ip", "range", "country", "as"],
-        interval=config.update_frequency,
-    )
+    
+    # Build StreamClient parameters
+    client_params = buildClientParams(config)
+
+    crowdsec_client = StreamClient(**client_params)
     crowdsec_client.run()
     await trio.sleep(2)  # Wait for initial polling by bouncer, so we start with a hydrated state
     if not crowdsec_client.is_running():
         return
     previous_states = {}
     while True and not exiting:
+        logger.info(
+            f"Retrieving new decisions from CrowdSec LAPI with scopes {client_params['scopes']} "
+            f"and origins {client_params['only_include_decisions_from']}"
+        )
         new_state = crowdsec_client.get_current_decisions()
 
         async with trio.open_nursery() as n:
@@ -292,7 +327,9 @@ def main():
         help="Path to configuration file."
     )
     arg_parser.add_argument("-d", help="Whether to cleanup resources.", action="store_true")
-    arg_parser.add_argument("-e", help="Edit existing config with new tokens (requires both -g and -c).", action="store_true")
+    arg_parser.add_argument(
+        "-e", help="Edit existing config with new tokens (requires both -g and -c).", action="store_true"
+    )
     arg_parser.add_argument("-g", type=str, help="Comma separated tokens to generate config for.")
     arg_parser.add_argument("-o", type=str, help="Path to file to output the generated config.")
     arg_parser.add_help = True

@@ -43,6 +43,7 @@ class ACLCollection:
             "service_id": self.service_id,
             "version": self.version,
             "action": self.action,
+            "max_items": self.max_items,
             "state": list(self.state),
         }
 
@@ -129,7 +130,7 @@ class ACLCollection:
                 continue
 
             if not self.insert_item(new_item):
-                logger.warn(
+                logger.warning(
                     with_suffix(
                         f"acl_collection for {self.action} has reached configured max_items limit ({self.max_items} items). Ignoring remaining items.",
                         service_id=self.service_id,
@@ -179,8 +180,6 @@ class ACLCollection:
                 acl_collection=self.action,
             )
         )
-        acl.entries_to_add = set()
-        acl.entries_to_delete = set()
 
 
 @dataclass
@@ -214,6 +213,7 @@ class Service:
                 service_id=jsonable_dict["service_id"],
                 version=jsonable_dict["version"],
                 action=action,
+                max_items=data.get("max_items", 20000),  # Use cached max_items or default
                 state=set(data["state"]),
                 acls=[
                     ACL(
