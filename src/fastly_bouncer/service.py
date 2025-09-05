@@ -107,6 +107,15 @@ class ACLCollection:
     def transform_to_state(self, new_state):
         new_items = new_state - self.state
         expired_items = self.state - new_state
+        
+        logger.info(
+            with_suffix(
+                f"processing {len(new_items)} items to add and {len(expired_items)} items to remove",
+                service_id=self.service_id,
+                action=self.action,
+            )
+        )
+        
         if new_items:
             logger.info(
                 with_suffix(
@@ -370,6 +379,10 @@ class Service:
         "new_state" is mapping of item->action. Eg  {"1.2.3.4": "ban", "CN": "captcha", "1234": "ban"}.
         item is string representation of IP or Country or AS Number.
         """
+        # Log old state count
+        old_state_count = sum(len(acl_collection.state) for acl_collection in self.acl_collection_by_action.values())
+        logger.info(with_suffix(f"Old state contains {old_state_count} decisions", service_id=self.service_id))
+        
         new_acl_state_by_action = {action: set() for action in self.supported_actions}
 
         prev_countries_by_action = {

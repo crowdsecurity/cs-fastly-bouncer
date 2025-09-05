@@ -281,11 +281,14 @@ async def run(config: Config, services: List[Service]):
         return
     previous_states = {}
     while True and not exiting:
-        logger.info(
-            f"Retrieving new decisions from CrowdSec LAPI with scopes {client_params['scopes']} "
-            f"and origins {client_params['only_include_decisions_from']}"
+        logger.debug(
+            f"Retrieving decisions from LAPI with scopes {client_params['scopes']} "
+            f"and origins {client_params['only_include_decisions_from']} "
+            f"and include_scenarios_containing {client_params.get('include_scenarios_containing', [])} "
+            f"and exclude_scenarios_containing {client_params.get('exclude_scenarios_containing', [])}"
         )
         new_state = crowdsec_client.get_current_decisions()
+        logger.info(f"Retrieved {len(new_state)} active decisions from LAPI")
 
         async with trio.open_nursery() as n:
             for s in services:
@@ -293,7 +296,7 @@ async def run(config: Config, services: List[Service]):
 
         new_states = list(map(lambda service: service.as_jsonable_dict(), services))
         if new_states != previous_states:
-            logger.debug("updating cache")
+            logger.info("Updating local cache file")
             new_cache = {"service_states": new_states, "bouncer_version": VERSION}
             async with await trio.open_file(config.cache_path, "w") as f:
                 await f.write(json.dumps(new_cache, indent=4))

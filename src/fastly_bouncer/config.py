@@ -8,7 +8,7 @@ import yaml
 import sys
 
 from fastly_bouncer.fastly_api import FastlyAPI
-from fastly_bouncer.utils import are_filled_validator, VERSION
+from fastly_bouncer.utils import are_filled_validator, VERSION, DEFAULT_DECISION_SOURCES
 
 
 @dataclass
@@ -17,7 +17,7 @@ class CrowdSecConfig:
     lapi_url: str = "http://localhost:8080/"
     include_scenarios_containing: List[str] = field(default_factory=list)
     exclude_scenarios_containing: List[str] = field(default_factory=list)
-    only_include_decisions_from: List[str] = field(default_factory=lambda: ["crowdsec", "cscli"])
+    only_include_decisions_from: List[str] = field(default_factory=lambda: DEFAULT_DECISION_SOURCES.copy())
     insecure_skip_verify: bool = False
     key_path: str = ""
     cert_path: str = ""
@@ -104,7 +104,7 @@ def parse_config_file(path: Path):
                 lapi_url=crowdsec_data.get("lapi_url", "http://localhost:8080/"),
                 include_scenarios_containing=crowdsec_data.get("include_scenarios_containing", []),
                 exclude_scenarios_containing=crowdsec_data.get("exclude_scenarios_containing", []),
-                only_include_decisions_from=crowdsec_data.get("only_include_decisions_from", ["crowdsec", "cscli"]),
+                only_include_decisions_from=crowdsec_data.get("only_include_decisions_from", DEFAULT_DECISION_SOURCES),
                 insecure_skip_verify=crowdsec_data.get("insecure_skip_verify", False),
                 key_path=crowdsec_data.get("key_path", ""),
                 cert_path=crowdsec_data.get("cert_path", ""),
