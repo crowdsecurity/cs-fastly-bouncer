@@ -15,7 +15,9 @@ from fastly_bouncer.utils import with_suffix
 logger: logging.Logger = logging.getLogger("")
 
 
-ACL_CAPACITY = 1000
+ACL_CAPACITY = 1000  # Max number of entries an ACL can hold
+ACL_BATCH_SIZE = 1000  # Max number of entries that can be added/removed in a single API call
+ENTRIES_PER_PAGE = 1000
 
 
 @dataclass
@@ -77,8 +79,14 @@ class VCL:
         }
 
 
-async def raise_on_4xx_5xx(response):
-    response.raise_for_status()
+async def log_and_raise_on_error(response):
+    if response.status_code >= 400:
+        try:
+            error_body = response.text
+            logger.error(f"HTTP {response.status_code} error for {response.request.method} {response.url}: {error_body}")
+        except Exception:
+            logger.error(f"HTTP {response.status_code} error for {response.request.method} {response.url}")
+        response.raise_for_status()
 
 
 class FastlyAPI:
@@ -91,7 +99,7 @@ class FastlyAPI:
             headers=httpx.Headers({"Fastly-Key": self._token}),
             timeout=httpx.Timeout(connect=30, read=None, write=15, pool=None),
             transport=httpx.AsyncHTTPTransport(retries=3),
-            event_hooks={"response": [raise_on_4xx_5xx]},
+            event_hooks={"response": [log_and_raise_on_error]},
         )
 
     async def get_version_to_clone(self, service_id: str) -> str:
@@ -275,7 +283,7 @@ class FastlyAPI:
     async def refresh_acl_entries(self, acl: ACL) -> Dict[str, str]:
         acl.entries = {}
         page = 1
-        per_page = 100
+        per_page = ENTRIES_PER_PAGE
         
         while True:
             resp = await self.session.get(
@@ -329,27 +337,40 @@ class FastlyAPI:
             acl.entries_to_delete -= successfully_processed_deletions
             return
 
-        logger.debug(with_suffix(f"processing {len(update_entries)} operations in batches of 100", acl_id=acl.id))
+        logger.debug(with_suffix(f"processing {len(update_entries)} operations in batches of {ACL_BATCH_SIZE}", acl_id=acl.id))
 
-        # Only 100 operations per request can be done on an acl.
-        async with trio.open_nursery() as n:
-            for i in range(0, len(update_entries), 100):
-                update_entries_batch = update_entries[i : i + 100]
-                # Track which items are in this batch
-                for entry in update_entries_batch:
-                    if entry["op"] == "create":
-                        successfully_processed_additions.add(entry["item"])
-                    elif entry["op"] == "delete":
-                        successfully_processed_deletions.add(entry["item"])
-                
+        # Only ACL_BATCH_SIZE operations per request can be done on an acl.
+        async def process_batch(batch_entries, batch_idx):
+            try:
                 # Remove the tracking field before sending to API
-                api_batch = [{k: v for k, v in entry.items() if k != "item"} for entry in update_entries_batch]
+                api_batch = [{k: v for k, v in entry.items() if k != "item"} for entry in batch_entries]
                 request_body = {"entries": api_batch}
-                f = partial(self.session.patch, json=request_body)
-                n.start_soon(
-                    f,
+                await self.session.patch(
                     self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries"),
+                    json=request_body
                 )
+                logger.debug(with_suffix(f"successfully processed batch {batch_idx} with {len(batch_entries)} operations", acl_id=acl.id))
+            except Exception as e:
+                logger.error(with_suffix(f"failed to process batch {batch_idx} with {len(batch_entries)} operations: {e}", acl_id=acl.id))
+                # Remove items from successfully_processed sets since they failed
+                for entry in batch_entries:
+                    if entry["op"] == "create":
+                        successfully_processed_additions.discard(entry["item"])
+                    elif entry["op"] == "delete":
+                        successfully_processed_deletions.discard(entry["item"])
+
+        # Process batches with error handling
+        for i in range(0, len(update_entries), ACL_BATCH_SIZE):
+            update_entries_batch = update_entries[i : i + ACL_BATCH_SIZE]
+            # Track which items are in this batch
+            for entry in update_entries_batch:
+                if entry["op"] == "create":
+                    successfully_processed_additions.add(entry["item"])
+                elif entry["op"] == "delete":
+                    successfully_processed_deletions.add(entry["item"])
+            
+            batch_idx = i // ACL_BATCH_SIZE + 1
+            await process_batch(update_entries_batch, batch_idx)
 
         acl = await self.refresh_acl_entries(acl)
         
