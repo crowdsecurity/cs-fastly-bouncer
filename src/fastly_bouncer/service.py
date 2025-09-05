@@ -24,6 +24,7 @@ class ACLCollection:
         service_id: str,
         version: str,
         action: str,
+        max_items: int = 20000,
         acls=[],
         state=set(),
     ):
@@ -32,6 +33,7 @@ class ACLCollection:
         self.service_id = service_id
         self.version = version
         self.action = action
+        self.max_items = max_items
         self.state: Set = state
 
     def as_jsonable_dict(self) -> Dict:
@@ -74,6 +76,11 @@ class ACLCollection:
         """
         Returns True if the item was successfully allocated in an ACL
         """
+        # Check if we've reached the configured max_items limit
+        total_items = len(self.state)
+        if total_items >= self.max_items:
+            return False
+            
         # Check if item is already present in some ACL
         for acl in self.acls:
             if not acl.is_full():
@@ -124,7 +131,7 @@ class ACLCollection:
             if not self.insert_item(new_item):
                 logger.warn(
                     with_suffix(
-                        f"acl_collection for {self.action} is full. Ignoring remaining items.",
+                        f"acl_collection for {self.action} has reached configured max_items limit ({self.max_items} items). Ignoring remaining items.",
                         service_id=self.service_id,
                     )
                 )

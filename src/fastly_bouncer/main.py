@@ -58,6 +58,7 @@ async def setup_action_for_service(
         service_id=service_cfg.id,
         version=service_version,
         action=action,
+        max_items=service_cfg.max_items,
         state=set(),
     )
     logger.info(
