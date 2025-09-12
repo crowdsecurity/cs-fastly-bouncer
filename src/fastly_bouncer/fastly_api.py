@@ -14,7 +14,9 @@ from fastly_bouncer.utils import with_suffix
 logger: logging.Logger = logging.getLogger("")
 
 ACL_CAPACITY = 1000  # Max number of entries an ACL can hold
-ACL_BATCH_SIZE = 1000  # Max number of entries that can be added/removed in a single API call
+ACL_BATCH_SIZE = (
+    1000  # Max number of entries that can be added/removed in a single API call
+)
 ENTRIES_PER_PAGE = 1000
 
 
@@ -168,12 +170,16 @@ class FastlyAPI:
 
     async def delete_vcl(self, vcl: VCL):
         resp = await self.session.delete(
-            self.api_url(f"/service/{vcl.service_id}/version/{vcl.version}/snippet/{vcl.name}")
+            self.api_url(
+                f"/service/{vcl.service_id}/version/{vcl.version}/snippet/{vcl.name}"
+            )
         )
         return resp.json()
 
     async def get_all_acls(self, service_id, version) -> List[ACL]:
-        resp = await self.session.get(self.api_url(f"/service/{service_id}/version/{version}/acl"))
+        resp = await self.session.get(
+            self.api_url(f"/service/{service_id}/version/{version}/acl")
+        )
         acls = resp.json()
         return [
             ACL(id=acl["id"], name=acl["name"], service_id=service_id, version=version)
@@ -182,7 +188,9 @@ class FastlyAPI:
 
     async def delete_acl(self, acl: ACL):
         resp = await self.session.delete(
-            self.api_url(f"/service/{acl.service_id}/version/{acl.version}/acl/{acl.name}")
+            self.api_url(
+                f"/service/{acl.service_id}/version/{acl.version}/acl/{acl.name}"
+            )
         )
         return resp
 
@@ -303,11 +311,15 @@ class FastlyAPI:
 
             page += 1
 
-        logger.debug(with_suffix(f"refreshed {len(acl.entries)} ACL entries", acl_id=acl.id))
+        logger.debug(
+            with_suffix(f"refreshed {len(acl.entries)} ACL entries", acl_id=acl.id)
+        )
         return acl
 
     async def process_acl(self, acl: ACL):
-        logger.debug(with_suffix(f"entries to delete {acl.entries_to_delete}", acl_id=acl.id))
+        logger.debug(
+            with_suffix(f"entries to delete {acl.entries_to_delete}", acl_id=acl.id)
+        )
         logger.debug(with_suffix(f"entries to add {acl.entries_to_add}", acl_id=acl.id))
         update_entries = []
         successfully_processed_additions = set()
@@ -357,7 +369,8 @@ class FastlyAPI:
             try:
                 # Remove the tracking field before sending to API
                 api_batch = [
-                    {k: v for k, v in entry.items() if k != "item"} for entry in batch_entries
+                    {k: v for k, v in entry.items() if k != "item"}
+                    for entry in batch_entries
                 ]
                 request_body = {"entries": api_batch}
                 await self.session.patch(

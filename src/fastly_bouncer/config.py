@@ -44,7 +44,9 @@ class FastlyServiceConfig:
     def __post_init__(self):
         # Exclude reference_version from validation since it can be None
         fields_to_validate = {
-            key: getattr(self, key) for key in asdict(self).keys() if key != "reference_version"
+            key: getattr(self, key)
+            for key in asdict(self).keys()
+            if key != "reference_version"
         }
         are_filled_validator(**fields_to_validate)
 
@@ -76,7 +78,9 @@ class Config:
     log_file: str
     update_frequency: int
     crowdsec_config: CrowdSecConfig
-    cache_path: str = "/var/lib/crowdsec/crowdsec-fastly-bouncer/cache/fastly-cache.json"
+    cache_path: str = (
+        "/var/lib/crowdsec/crowdsec-fastly-bouncer/cache/fastly-cache.json"
+    )
     bouncer_version: str = VERSION
     fastly_account_configs: List[FastlyAccountConfig] = field(default_factory=list)
 
@@ -107,8 +111,12 @@ def parse_config_file(path: Path):
             crowdsec_config=CrowdSecConfig(
                 lapi_key=crowdsec_data["lapi_key"],
                 lapi_url=crowdsec_data.get("lapi_url", "http://localhost:8080/"),
-                include_scenarios_containing=crowdsec_data.get("include_scenarios_containing", []),
-                exclude_scenarios_containing=crowdsec_data.get("exclude_scenarios_containing", []),
+                include_scenarios_containing=crowdsec_data.get(
+                    "include_scenarios_containing", []
+                ),
+                exclude_scenarios_containing=crowdsec_data.get(
+                    "exclude_scenarios_containing", []
+                ),
                 only_include_decisions_from=crowdsec_data.get(
                     "only_include_decisions_from", DEFAULT_DECISION_SOURCES
                 ),
@@ -117,7 +125,9 @@ def parse_config_file(path: Path):
                 cert_path=crowdsec_data.get("cert_path", ""),
                 ca_cert_path=crowdsec_data.get("ca_cert_path", ""),
             ),
-            fastly_account_configs=fastly_config_from_dict(data["fastly_account_configs"]),
+            fastly_account_configs=fastly_config_from_dict(
+                data["fastly_account_configs"]
+            ),
             log_level=data["log_level"],
             log_mode=data["log_mode"],
             log_file=data["log_file"],
@@ -167,7 +177,9 @@ class ConfigGenerator:
                     break
 
             if "activate:" in line:
-                lines[i] = f"{line}  # Set to true, to activate the new config in production"
+                lines[i] = (
+                    f"{line}  # Set to true, to activate the new config in production"
+                )
                 continue
 
             if "captcha_cookie_expiry_duration" in line:
@@ -210,7 +222,9 @@ class ConfigGenerator:
             async with sender:
                 for service_id in service_ids:
                     n.start_soon(
-                        ConfigGenerator.generate_config_for_service, service_id, sender.clone()
+                        ConfigGenerator.generate_config_for_service,
+                        service_id,
+                        sender.clone(),
                     )
 
             async with receiver:
@@ -220,7 +234,9 @@ class ConfigGenerator:
         return FastlyAccountConfig(account_token=fastly_token, services=service_configs)
 
     @staticmethod
-    async def edit_config(comma_separated_fastly_tokens: str, existing_config: Config) -> str:
+    async def edit_config(
+        comma_separated_fastly_tokens: str, existing_config: Config
+    ) -> str:
         fastly_tokens = comma_separated_fastly_tokens.split(",")
         fastly_tokens = list(map(lambda token: token.strip(), fastly_tokens))
 
@@ -241,7 +257,9 @@ class ConfigGenerator:
             new_config.fastly_account_configs.append(account_cfg)
 
         # Merge service configurations from existing config
-        merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
+        merged_config = ConfigGenerator.merge_service_configs(
+            existing_config, new_config
+        )
 
         return ConfigGenerator.add_comments(yaml.safe_dump(asdict(merged_config)))
 

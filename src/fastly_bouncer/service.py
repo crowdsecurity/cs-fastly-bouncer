@@ -49,7 +49,9 @@ class ACLCollection:
 
     async def create_acl(self, i, sender_chan):
         acl_name = f"crowdsec_{self.action}_{i}"
-        logger.info(with_suffix(f"creating acl {acl_name} ", service_id=self.service_id))
+        logger.info(
+            with_suffix(f"creating acl {acl_name} ", service_id=self.service_id)
+        )
         acl = await self.api.create_acl_for_service(
             service_id=self.service_id, version=self.version, name=acl_name
         )
@@ -214,7 +216,8 @@ class Service:
     def from_jsonable_dict(cls, jsonable_dict: Dict):
         api = FastlyAPI(jsonable_dict["token"])
         vcl_by_action = {
-            action: VCL(**data) for action, data in jsonable_dict["vcl_by_action"].items()
+            action: VCL(**data)
+            for action, data in jsonable_dict["vcl_by_action"].items()
         }
         static_vcls = [VCL(**data) for data in jsonable_dict["static_vcls"]]
         acl_collection_by_action = {
@@ -223,7 +226,9 @@ class Service:
                 service_id=jsonable_dict["service_id"],
                 version=jsonable_dict["version"],
                 action=action,
-                max_items=data.get("max_items", 20000),  # Use cached max_items or default
+                max_items=data.get(
+                    "max_items", 20000
+                ),  # Use cached max_items or default
                 state=set(data["state"]),
                 acls=[
                     ACL(
@@ -262,7 +267,9 @@ class Service:
             supported_actions=jsonable_dict["supported_actions"],
             vcl_by_action=vcl_by_action,
             static_vcls=static_vcls,
-            current_conditional_by_action=jsonable_dict["current_conditional_by_action"],
+            current_conditional_by_action=jsonable_dict[
+                "current_conditional_by_action"
+            ],
             countries_by_action=countries_by_action,
             autonomoussystems_by_action=autonomoussystems_by_action,
             acl_collection_by_action=acl_collection_by_action,
@@ -280,10 +287,12 @@ class Service:
             for action, acl_collection in self.acl_collection_by_action.items()
         }
         countries_by_action = {
-            action: list(countries) for action, countries in self.countries_by_action.items()
+            action: list(countries)
+            for action, countries in self.countries_by_action.items()
         }
         autonomoussystems_by_action = {
-            action: list(systems) for action, systems in self.autonomoussystems_by_action.items()
+            action: list(systems)
+            for action, systems in self.autonomoussystems_by_action.items()
         }
         static_vcls = list(map(lambda vcl: vcl.as_jsonable_dict(), self.static_vcls))
 
@@ -309,7 +318,9 @@ class Service:
             self.supported_actions = ["ban", "captcha"]
 
         self.countries_by_action = {action: set() for action in self.supported_actions}
-        self.autonomoussystems_by_action = {action: set() for action in self.supported_actions}
+        self.autonomoussystems_by_action = {
+            action: set() for action in self.supported_actions
+        }
         jwt_secret = str(uuid.uuid1())
         if not self.vcl_by_action:
             self.vcl_by_action = {
@@ -330,7 +341,9 @@ class Service:
                 ),
             }
             for action in [
-                action for action in self.vcl_by_action if action not in self.supported_actions
+                action
+                for action in self.vcl_by_action
+                if action not in self.supported_actions
             ]:
                 del self.vcl_by_action[action]
 
@@ -358,7 +371,9 @@ class Service:
                 VCL(
                     name="crowdsec_captcha_google_backend",
                     service_id=self.service_id,
-                    action=vcl_templates.GOOGLE_BACKEND.format(SERVICE_ID=self.service_id),
+                    action=vcl_templates.GOOGLE_BACKEND.format(
+                        SERVICE_ID=self.service_id
+                    ),
                     version=self.version,
                     type="init",
                 ),
@@ -382,21 +397,25 @@ class Service:
         """
         # Log old state count
         old_state_count = sum(
-            len(acl_collection.state) for acl_collection in self.acl_collection_by_action.values()
+            len(acl_collection.state)
+            for acl_collection in self.acl_collection_by_action.values()
         )
         logger.info(
             with_suffix(
-                f"Old state contains {old_state_count} decisions", service_id=self.service_id
+                f"Old state contains {old_state_count} decisions",
+                service_id=self.service_id,
             )
         )
 
         new_acl_state_by_action = {action: set() for action in self.supported_actions}
 
         prev_countries_by_action = {
-            action: countries.copy() for action, countries in self.countries_by_action.items()
+            action: countries.copy()
+            for action, countries in self.countries_by_action.items()
         }
         prev_autonomoussystems_by_action = {
-            action: systems.copy() for action, systems in self.autonomoussystems_by_action.items()
+            action: systems.copy()
+            for action, systems in self.autonomoussystems_by_action.items()
         }
 
         self.clear_sets()
@@ -423,22 +442,28 @@ class Service:
             self.acl_collection_by_action[action].transform_to_state(expected_acl_state)
 
         for action in self.supported_actions:
-            expired_countries = prev_countries_by_action[action] - self.countries_by_action[action]
+            expired_countries = (
+                prev_countries_by_action[action] - self.countries_by_action[action]
+            )
             if expired_countries:
                 logger.info(f"{action} removed for countries {expired_countries} ")
 
             expired_systems = (
-                prev_autonomoussystems_by_action[action] - self.autonomoussystems_by_action[action]
+                prev_autonomoussystems_by_action[action]
+                - self.autonomoussystems_by_action[action]
             )
             if expired_systems:
                 logger.info(f"{action} removed for AS {expired_systems} ")
 
-            new_countries = self.countries_by_action[action] - prev_countries_by_action[action]
+            new_countries = (
+                self.countries_by_action[action] - prev_countries_by_action[action]
+            )
             if new_countries:
                 logger.info(f"countries {new_countries} will get {action} ")
 
             new_systems = (
-                self.autonomoussystems_by_action[action] - prev_autonomoussystems_by_action[action]
+                self.autonomoussystems_by_action[action]
+                - prev_autonomoussystems_by_action[action]
             )
             if new_systems:
                 logger.info(f"AS {new_systems} will get {action}")
@@ -476,7 +501,9 @@ class Service:
             self.vcl_by_action[action] = vcl
 
     @staticmethod
-    def generate_equalto_conditions_for_items(items: Iterable, equal_to: str, quote=False):
+    def generate_equalto_conditions_for_items(
+        items: Iterable, equal_to: str, quote=False
+    ):
         items = sorted(items)
         if not quote:
             return " || ".join([f"{equal_to} == {item}" for item in items])

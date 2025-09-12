@@ -18,7 +18,11 @@ class TestACLCollection(TestCase):
     def test_init(self):
         """Test ACLCollection initialization"""
         collection = ACLCollection(
-            api=self.mock_api, service_id="service123", version="1", action="ban", max_items=5000
+            api=self.mock_api,
+            service_id="service123",
+            version="1",
+            action="ban",
+            max_items=5000,
         )
 
         self.assertEqual(collection.service_id, "service123")
@@ -72,7 +76,11 @@ class TestACLCollection(TestCase):
     def test_insert_item_success(self):
         """Test successful item insertion"""
         collection = ACLCollection(
-            api=self.mock_api, service_id="service123", version="1", action="ban", max_items=5
+            api=self.mock_api,
+            service_id="service123",
+            version="1",
+            action="ban",
+            max_items=5,
         )
 
         # Add a mock ACL that's not full
@@ -108,7 +116,11 @@ class TestACLCollection(TestCase):
     def test_insert_item_acl_full(self):
         """Test item insertion when all ACLs are full"""
         collection = ACLCollection(
-            api=self.mock_api, service_id="service123", version="1", action="ban", max_items=100
+            api=self.mock_api,
+            service_id="service123",
+            version="1",
+            action="ban",
+            max_items=100,
         )
 
         # Add a mock ACL that's full
@@ -230,11 +242,11 @@ class TestService(TestCase):
     def test_generate_equalto_conditions_for_items_no_quote(self):
         """Test generating equal-to conditions without quotes"""
         items = ["1234", "5678", "9999"]
-        result = Service.generate_equalto_conditions_for_items(items, "client.as.number")
-
-        expected = (
-            "client.as.number == 1234 || client.as.number == 5678 || client.as.number == 9999"
+        result = Service.generate_equalto_conditions_for_items(
+            items, "client.as.number"
         )
+
+        expected = "client.as.number == 1234 || client.as.number == 5678 || client.as.number == 9999"
         self.assertEqual(result, expected)
 
     def test_generate_equalto_conditions_for_items_with_quote(self):

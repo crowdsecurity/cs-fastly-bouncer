@@ -38,11 +38,17 @@ class TestBuildClientParams(unittest.TestCase):
 
     def test_include_scenarios_containing(self):
         """Test include_scenarios_containing parameter"""
-        self.crowdsec_config.include_scenarios_containing = ["http", "ssh", "brute-force"]
+        self.crowdsec_config.include_scenarios_containing = [
+            "http",
+            "ssh",
+            "brute-force",
+        ]
 
         result = buildClientParams(self.config)
 
-        self.assertEqual(result["include_scenarios_containing"], ("http", "ssh", "brute-force"))
+        self.assertEqual(
+            result["include_scenarios_containing"], ("http", "ssh", "brute-force")
+        )
 
     def test_exclude_scenarios_containing(self):
         """Test exclude_scenarios_containing parameter"""
@@ -89,11 +95,16 @@ class TestBuildClientParams(unittest.TestCase):
 
     def test_custom_decision_sources(self):
         """Test custom only_include_decisions_from parameter"""
-        self.crowdsec_config.only_include_decisions_from = ["custom-source", "another-source"]
+        self.crowdsec_config.only_include_decisions_from = [
+            "custom-source",
+            "another-source",
+        ]
 
         result = buildClientParams(self.config)
 
-        self.assertEqual(result["only_include_decisions_from"], ("custom-source", "another-source"))
+        self.assertEqual(
+            result["only_include_decisions_from"], ("custom-source", "another-source")
+        )
 
     def test_different_update_frequency(self):
         """Test different update frequency values"""

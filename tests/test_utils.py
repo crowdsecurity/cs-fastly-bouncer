@@ -119,7 +119,9 @@ class TestWithSuffix(unittest.TestCase):
 
     def test_with_suffix_multiple_kwargs(self):
         """Test with_suffix with multiple keyword arguments"""
-        result = with_suffix("Processing request", service_id="svc123", version="2", action="ban")
+        result = with_suffix(
+            "Processing request", service_id="svc123", version="2", action="ban"
+        )
 
         # Arguments should be sorted alphabetically
         expected = "Processing request action=ban service_id=svc123 version=2"
@@ -147,7 +149,9 @@ class TestWithSuffix(unittest.TestCase):
 
     def test_with_suffix_special_characters(self):
         """Test with_suffix with special characters in values"""
-        result = with_suffix("Message", path="/var/log/file.log", query="name=test&active=true")
+        result = with_suffix(
+            "Message", path="/var/log/file.log", query="name=test&active=true"
+        )
 
         # Keys should be sorted, values should be preserved as-is
         expected = "Message path=/var/log/file.log query=name=test&active=true"

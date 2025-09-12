@@ -64,7 +64,10 @@ class TestVCLDataClass(unittest.TestCase):
     def test_vcl_creation(self):
         """Test VCL dataclass creation"""
         vcl = VCL(
-            name="test_vcl", service_id="service123", version="1", action='error 403 "Forbidden";'
+            name="test_vcl",
+            service_id="service123",
+            version="1",
+            action='error 403 "Forbidden";',
         )
 
         self.assertEqual(vcl.name, "test_vcl")
@@ -95,7 +98,10 @@ class TestVCLDataClass(unittest.TestCase):
     def test_vcl_to_dict_without_conditional(self):
         """Test VCL to_dict method without conditional"""
         vcl = VCL(
-            name="test_vcl", service_id="service123", version="1", action='error 403 "Forbidden";'
+            name="test_vcl",
+            service_id="service123",
+            version="1",
+            action='error 403 "Forbidden";',
         )
 
         result = vcl.to_dict()
@@ -185,7 +191,9 @@ class TestFastlyAPI(unittest.IsolatedAsyncioTestCase):
 
     @patch.object(FastlyAPI, "get_all_acls")
     @patch.object(FastlyAPI, "get_all_vcls")
-    async def test_clear_crowdsec_resources_none_found(self, mock_get_vcls, mock_get_acls):
+    async def test_clear_crowdsec_resources_none_found(
+        self, mock_get_vcls, mock_get_acls
+    ):
         """Test clear_crowdsec_resources when no CrowdSec resources exist"""
         # Mock no CrowdSec resources
         other_acl = ACL(id="acl1", name="other_acl", service_id="svc", version="1")

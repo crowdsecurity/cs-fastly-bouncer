@@ -32,7 +32,9 @@ class TestConfigGeneration(TestCase):
         """Test FastlyServiceConfig validates required fields"""
         # Valid config should not raise
         config = FastlyServiceConfig(
-            id="service123", recaptcha_site_key="site_key", recaptcha_secret_key="secret_key"
+            id="service123",
+            recaptcha_site_key="site_key",
+            recaptcha_secret_key="secret_key",
         )
         self.assertEqual(config.id, "service123")
         self.assertEqual(config.activate, False)  # Default value
@@ -40,7 +42,9 @@ class TestConfigGeneration(TestCase):
 
         # None required field should raise (are_filled_validator checks for None, not empty strings)
         with self.assertRaises(ValueError) as context:
-            FastlyServiceConfig(id=None, recaptcha_site_key="site", recaptcha_secret_key="secret")
+            FastlyServiceConfig(
+                id=None, recaptcha_site_key="site", recaptcha_secret_key="secret"
+            )
         self.assertIn("id is not specified", str(context.exception))
 
     def test_config_validation(self):
@@ -49,9 +53,13 @@ class TestConfigGeneration(TestCase):
 
         # Valid config with account token and services
         service_config = FastlyServiceConfig(
-            id="service1", recaptcha_site_key="site_key", recaptcha_secret_key="secret_key"
+            id="service1",
+            recaptcha_site_key="site_key",
+            recaptcha_secret_key="secret_key",
         )
-        account_config = FastlyAccountConfig(account_token="token123", services=[service_config])
+        account_config = FastlyAccountConfig(
+            account_token="token123", services=[service_config]
+        )
 
         config = Config(
             log_level="info",
@@ -138,8 +146,12 @@ class TestConfigGeneration(TestCase):
             self.assertEqual(config.crowdsec_config.lapi_key, "test_api_key")
             self.assertEqual(config.crowdsec_config.lapi_url, "http://crowdsec:8080/")
             self.assertTrue(config.crowdsec_config.insecure_skip_verify)
-            self.assertEqual(config.crowdsec_config.include_scenarios_containing, ["http"])
-            self.assertEqual(config.crowdsec_config.exclude_scenarios_containing, ["ssh"])
+            self.assertEqual(
+                config.crowdsec_config.include_scenarios_containing, ["http"]
+            )
+            self.assertEqual(
+                config.crowdsec_config.exclude_scenarios_containing, ["ssh"]
+            )
 
             # Verify account config
             self.assertEqual(len(config.fastly_account_configs), 1)
@@ -206,7 +218,9 @@ class TestConfigGeneration(TestCase):
             recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
             activate=False,
         )
-        new_account = FastlyAccountConfig(account_token="token123", services=[new_service])
+        new_account = FastlyAccountConfig(
+            account_token="token123", services=[new_service]
+        )
         new_config = Config(
             log_level="info",
             log_mode="stdout",
@@ -240,7 +254,9 @@ class TestConfigGeneration(TestCase):
     def test_fastly_service_config_with_none_reference_version(self):
         """Test FastlyServiceConfig with None reference_version (default)"""
         service_config = FastlyServiceConfig(
-            id="test_service", recaptcha_site_key="site_key", recaptcha_secret_key="secret_key"
+            id="test_service",
+            recaptcha_site_key="site_key",
+            recaptcha_secret_key="secret_key",
         )
 
         self.assertIsNone(service_config.reference_version)
@@ -275,7 +291,9 @@ class TestConfigGeneration(TestCase):
             activate=False,
             reference_version="10",
         )
-        new_account = FastlyAccountConfig(account_token="new_token", services=[new_service])
+        new_account = FastlyAccountConfig(
+            account_token="new_token", services=[new_service]
+        )
         new_config = Config(
             log_level="debug",
             log_mode="file",
@@ -286,14 +304,18 @@ class TestConfigGeneration(TestCase):
         )
 
         # Merge configurations
-        merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
+        merged_config = ConfigGenerator.merge_service_configs(
+            existing_config, new_config
+        )
 
         # Verify existing service config preserved including reference_version
         merged_service = merged_config.fastly_account_configs[0].services[0]
         self.assertEqual(merged_service.recaptcha_site_key, "existing_site_key")
         self.assertEqual(merged_service.recaptcha_secret_key, "existing_secret")
         self.assertTrue(merged_service.activate)  # Preserved from existing
-        self.assertEqual(merged_service.reference_version, "5")  # Preserved from existing config
+        self.assertEqual(
+            merged_service.reference_version, "5"
+        )  # Preserved from existing config
 
     def test_merge_service_configs_with_none_reference_version(self):
         """Test merging preserves existing reference_version even when new config has None"""
@@ -323,7 +345,9 @@ class TestConfigGeneration(TestCase):
             recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
             reference_version=None,
         )
-        new_account = FastlyAccountConfig(account_token="new_token", services=[new_service])
+        new_account = FastlyAccountConfig(
+            account_token="new_token", services=[new_service]
+        )
         new_config = Config(
             log_level="debug",
             log_mode="file",
@@ -334,7 +358,9 @@ class TestConfigGeneration(TestCase):
         )
 
         # Merge configurations
-        merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
+        merged_config = ConfigGenerator.merge_service_configs(
+            existing_config, new_config
+        )
 
         # reference_version should be preserved from existing config, even when new is None
         merged_service = merged_config.fastly_account_configs[0].services[0]

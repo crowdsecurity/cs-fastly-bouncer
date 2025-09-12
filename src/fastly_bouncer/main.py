@@ -186,7 +186,9 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
                 logger.warning(f"cache file at {config.cache_path} is empty")
             else:
                 cache = json.loads(s)
-                services = list(map(Service.from_jsonable_dict, cache["service_states"]))
+                services = list(
+                    map(Service.from_jsonable_dict, cache["service_states"])
+                )
                 logger.info("loaded existing infra using cache")
                 if not cleanup_mode:
                     return services
@@ -236,7 +238,9 @@ def buildClientParams(config: Config):
         "interval": config.update_frequency,
         "user_agent": f"fastly-bouncer/v{VERSION}",
         "scopes": ("ip", "range", "country", "as"),
-        "only_include_decisions_from": tuple(config.crowdsec_config.only_include_decisions_from),
+        "only_include_decisions_from": tuple(
+            config.crowdsec_config.only_include_decisions_from
+        ),
     }
 
     # Include/exclude scenarios
@@ -272,7 +276,9 @@ async def run(config: Config, services: List[Service]):
 
     crowdsec_client = StreamClient(**client_params)
     crowdsec_client.run()
-    await trio.sleep(2)  # Wait for initial polling by bouncer, so we start with a hydrated state
+    await trio.sleep(
+        2
+    )  # Wait for initial polling by bouncer, so we start with a hydrated state
     if not crowdsec_client.is_running():
         return
     previous_states = {}
@@ -321,14 +327,20 @@ async def start(config: Config, cleanup_mode):
 def main():
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument("-c", type=Path, help="Path to configuration file.")
-    arg_parser.add_argument("-d", help="Whether to cleanup resources.", action="store_true")
+    arg_parser.add_argument(
+        "-d", help="Whether to cleanup resources.", action="store_true"
+    )
     arg_parser.add_argument(
         "-e",
         help="Edit existing config with new tokens (requires both -g and -c).",
         action="store_true",
     )
-    arg_parser.add_argument("-g", type=str, help="Comma separated tokens to generate config for.")
-    arg_parser.add_argument("-o", type=str, help="Path to file to output the generated config.")
+    arg_parser.add_argument(
+        "-g", type=str, help="Comma separated tokens to generate config for."
+    )
+    arg_parser.add_argument(
+        "-o", type=str, help="Path to file to output the generated config."
+    )
     arg_parser.add_help = True
     args = arg_parser.parse_args()
     # Validate edit mode requirements
@@ -342,7 +354,9 @@ def main():
             arg_parser.print_help()
             sys.exit(1)
         if args.o:
-            print("Edit mode (-e) cannot be used with output file (-o)", file=sys.stderr)
+            print(
+                "Edit mode (-e) cannot be used with output file (-o)", file=sys.stderr
+            )
             arg_parser.print_help()
             sys.exit(1)
 
@@ -359,7 +373,9 @@ def main():
             sys.exit(1)
         try:
             existing_config = parse_config_file(args.c)
-            edited_config = trio.run(ConfigGenerator().edit_config, args.g, existing_config)
+            edited_config = trio.run(
+                ConfigGenerator().edit_config, args.g, existing_config
+            )
 
             # Write the edited config back to the original file
             with open(args.c, "w") as f:
