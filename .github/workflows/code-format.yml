@@ -23,7 +23,7 @@ jobs:
       SOURCES: "crowdsec-fastly-bouncer"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         path: ${{ env.SOURCES }}
     - name: Set up Python ${{ matrix.python-version }}

@@ -16,7 +16,7 @@ crowdsecurity/fastly-bouncer \
 
 Now in the `cfg.yaml` file fill values of 
 
-- `recaptcha_secret_key` and `recaptcha_site_key`: See instructions about obtaining them [here](http://www.google.com/recaptcha/admin). This would allow captcha remediation.
+- `recaptcha_secret_key` and `recaptcha_site_key`: See instructions about getting them [here](http://www.google.com/recaptcha/admin). This would allow captcha remediation.
 
 - `lapi_key` and `lapi_url`:  The `lapi_url` is where crowdsec LAPI is listening. Make sure the container can access this URL. The `lapi_key` can be obtained by running 
 ```bash
@@ -32,7 +32,7 @@ touch cache.json
 ```
 
 
-Finally let's run the bouncer:
+Finally, let's run the bouncer:
 
 ```
 docker run\
