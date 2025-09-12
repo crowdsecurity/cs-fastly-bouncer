@@ -254,7 +254,7 @@ class ConfigGenerator:
             for i, new_service in enumerate(new_account.services):
                 if new_service.id in existing_services:
                     existing_service = existing_services[new_service.id]
-                    # Preserve existing service configuration but use new reference_version
+                    # Preserve existing service configuration including reference_version
                     new_account.services[i] = FastlyServiceConfig(
                         id=new_service.id,
                         recaptcha_site_key=existing_service.recaptcha_site_key,
@@ -262,7 +262,7 @@ class ConfigGenerator:
                         activate=existing_service.activate,
                         max_items=existing_service.max_items,
                         captcha_cookie_expiry_duration=existing_service.captcha_cookie_expiry_duration,
-                        reference_version=new_service.reference_version,
+                        reference_version=existing_service.reference_version,
                     )
 
         return new_config

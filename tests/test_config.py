@@ -258,7 +258,7 @@ class TestConfigGeneration(TestCase):
         self.assertIsNone(service_config.reference_version)
 
     def test_merge_service_configs_with_reference_version(self):
-        """Test merging preserves new reference_version"""
+        """Test merging preserves existing reference_version"""
         # Create existing config with reference_version
         existing_service = FastlyServiceConfig(
             id="service1",
@@ -304,15 +304,15 @@ class TestConfigGeneration(TestCase):
         # Merge configurations
         merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
         
-        # Verify existing service config preserved but new reference_version used
+        # Verify existing service config preserved including reference_version
         merged_service = merged_config.fastly_account_configs[0].services[0]
         self.assertEqual(merged_service.recaptcha_site_key, "existing_site_key")
         self.assertEqual(merged_service.recaptcha_secret_key, "existing_secret")
         self.assertTrue(merged_service.activate)  # Preserved from existing
-        self.assertEqual(merged_service.reference_version, "10")  # From new config
+        self.assertEqual(merged_service.reference_version, "5")  # Preserved from existing config
 
     def test_merge_service_configs_with_none_reference_version(self):
-        """Test merging when new config has None reference_version"""
+        """Test merging preserves existing reference_version even when new config has None"""
         # Create existing config with reference_version
         existing_service = FastlyServiceConfig(
             id="service1",
@@ -356,6 +356,6 @@ class TestConfigGeneration(TestCase):
         # Merge configurations
         merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
         
-        # reference_version should be None from new config
+        # reference_version should be preserved from existing config, even when new is None
         merged_service = merged_config.fastly_account_configs[0].services[0]
-        self.assertIsNone(merged_service.reference_version)
+        self.assertEqual(merged_service.reference_version, "5")
