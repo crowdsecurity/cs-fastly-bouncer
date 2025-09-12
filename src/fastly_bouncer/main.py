@@ -188,7 +188,11 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
                 services = list(
                     map(Service.from_jsonable_dict, cache["service_states"])
                 )
-                logger.info("loaded existing infra using cache")
+                logger.info("Loaded existing infra using cache: ")
+                for service in services:
+                    logger.info(
+                        f"service_id: {service.service_id}, version: {service.version}"
+                    )
                 if not cleanup_mode:
                     return services
     else:
