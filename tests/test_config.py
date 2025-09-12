@@ -10,6 +10,7 @@ from fastly_bouncer.config import (
     CrowdSecConfig,
     FastlyAccountConfig,
     FastlyServiceConfig,
+    fastly_config_from_dict,
     parse_config_file,
 )
 
@@ -364,3 +365,181 @@ class TestConfigGeneration(TestCase):
         # reference_version should be preserved from existing config, even when new is None
         merged_service = merged_config.fastly_account_configs[0].services[0]
         self.assertEqual(merged_service.reference_version, "5")
+
+    def test_unknown_service_config_parameters_ignored(self):
+        """Test that unknown service config parameters are ignored with warning"""
+        import sys
+        from io import StringIO
+
+        # Capture stderr to check for warning
+        captured_stderr = StringIO()
+        original_stderr = sys.stderr
+        sys.stderr = captured_stderr
+
+        try:
+            # Config data with unknown parameter
+            service_data = {
+                "id": "test_service",
+                "recaptcha_site_key": "site_key",
+                "recaptcha_secret_key": "secret_key",
+                "activate": True,
+                "clone_reference_version": True,  # Unknown parameter
+                "old_param": "should_be_ignored",  # Another unknown parameter
+            }
+
+            account_data = [{"account_token": "token123", "services": [service_data]}]
+
+            # This should not crash
+            result = fastly_config_from_dict(account_data)
+
+            # Verify it created the service successfully
+            self.assertEqual(len(result), 1)
+            service = result[0].services[0]
+            self.assertEqual(service.id, "test_service")
+            self.assertTrue(service.activate)
+
+            # Verify warnings were printed
+            stderr_output = captured_stderr.getvalue()
+            self.assertIn("clone_reference_version", stderr_output)
+            self.assertIn("old_param", stderr_output)
+            self.assertIn("Warning:", stderr_output)
+
+        finally:
+            # Restore stderr
+            sys.stderr = original_stderr
+
+    def test_unknown_root_config_parameters_ignored(self):
+        """Test that unknown root config parameters are ignored with warning"""
+        import sys
+        from io import StringIO
+
+        # Capture stderr to check for warning
+        captured_stderr = StringIO()
+        original_stderr = sys.stderr
+        sys.stderr = captured_stderr
+
+        try:
+            config_data = {
+                "log_level": "debug",
+                "log_mode": "file",
+                "log_file": "/var/log/bouncer.log",
+                "update_frequency": 30,
+                "cache_path": "/tmp/cache.json",
+                "old_root_param": "should_be_ignored",  # Unknown parameter
+                "deprecated_setting": True,  # Another unknown parameter
+                "crowdsec_config": {
+                    "lapi_key": "test_api_key",
+                    "lapi_url": "http://crowdsec:8080/",
+                },
+                "fastly_account_configs": [
+                    {
+                        "account_token": "fastly_token_123",
+                        "services": [
+                            {
+                                "id": "service_id_1",
+                                "recaptcha_site_key": "site_key_123",
+                                "recaptcha_secret_key": "secret_key_456",
+                            }
+                        ],
+                    }
+                ],
+            }
+
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yml", delete=False
+            ) as f:
+                yaml.dump(config_data, f)
+                temp_path = Path(f.name)
+
+            try:
+                # Parse the config - should not crash
+                config = parse_config_file(temp_path)
+
+                # Verify it parsed successfully
+                self.assertEqual(config.log_level, "debug")
+                self.assertEqual(config.update_frequency, 30)
+
+                # Verify warnings were printed
+                stderr_output = captured_stderr.getvalue()
+                self.assertIn("old_root_param", stderr_output)
+                self.assertIn("deprecated_setting", stderr_output)
+                self.assertIn("Warning:", stderr_output)
+                self.assertIn("root configuration", stderr_output)
+
+            finally:
+                # Clean up
+                temp_path.unlink()
+
+        finally:
+            # Restore stderr
+            sys.stderr = original_stderr
+
+    def test_unknown_crowdsec_config_parameters_ignored(self):
+        """Test that unknown crowdsec_config parameters are ignored with warning"""
+        import sys
+        from io import StringIO
+
+        # Capture stderr to check for warning
+        captured_stderr = StringIO()
+        original_stderr = sys.stderr
+        sys.stderr = captured_stderr
+
+        try:
+            config_data = {
+                "log_level": "debug",
+                "log_mode": "file",
+                "log_file": "/var/log/bouncer.log",
+                "update_frequency": 30,
+                "cache_path": "/tmp/cache.json",
+                "crowdsec_config": {
+                    "lapi_key": "test_api_key",
+                    "lapi_url": "http://crowdsec:8080/",
+                    "old_crowdsec_param": "should_be_ignored",  # Unknown parameter
+                    "deprecated_crowdsec_setting": False,  # Another unknown parameter
+                },
+                "fastly_account_configs": [
+                    {
+                        "account_token": "fastly_token_123",
+                        "services": [
+                            {
+                                "id": "service_id_1",
+                                "recaptcha_site_key": "site_key_123",
+                                "recaptcha_secret_key": "secret_key_456",
+                            }
+                        ],
+                    }
+                ],
+            }
+
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yml", delete=False
+            ) as f:
+                yaml.dump(config_data, f)
+                temp_path = Path(f.name)
+
+            try:
+                # Parse the config - should not crash
+                config = parse_config_file(temp_path)
+
+                # Verify it parsed successfully
+                self.assertEqual(config.crowdsec_config.lapi_key, "test_api_key")
+                self.assertEqual(
+                    config.crowdsec_config.lapi_url, "http://crowdsec:8080/"
+                )
+
+                # Verify warnings were printed
+                stderr_output = captured_stderr.getvalue()
+                self.assertIn("old_crowdsec_param", stderr_output)
+                self.assertIn("deprecated_crowdsec_setting", stderr_output)
+                self.assertIn("Warning:", stderr_output)
+                self.assertIn("crowdsec_config", stderr_output)
+
+            finally:
+                # Clean up
+                temp_path.unlink()
+
+        finally:
+            # Restore stderr
+            sys.stderr = original_stderr

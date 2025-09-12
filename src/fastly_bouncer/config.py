@@ -56,12 +56,36 @@ class FastlyAccountConfig:
     services: List[FastlyServiceConfig]
 
 
+def _filter_and_warn_unknown_fields(
+    data_dict: Dict, dataclass_type, context: str
+) -> Dict:
+    """Filter out unknown fields and warn about them"""
+    valid_fields = {f.name for f in dataclass_type.__dataclass_fields__.values()}
+    filtered_data = {}
+
+    for key, value in data_dict.items():
+        if key in valid_fields:
+            filtered_data[key] = value
+        else:
+            print(
+                f"Warning: Unknown configuration parameter '{key}' in {context} will be removed.",
+                file=sys.stderr,
+            )
+
+    return filtered_data
+
+
 def fastly_config_from_dict(data: Dict) -> List[FastlyAccountConfig]:
     account_configs: List[FastlyAccountConfig] = []
     for account_cfg in data:
         service_configs: List[FastlyServiceConfig] = []
         for service_cfg in account_cfg["services"]:
-            service_configs.append(FastlyServiceConfig(**service_cfg))
+            filtered_service_cfg = _filter_and_warn_unknown_fields(
+                service_cfg,
+                FastlyServiceConfig,
+                f"service '{service_cfg.get('id', 'unknown')}'",
+            )
+            service_configs.append(FastlyServiceConfig(**filtered_service_cfg))
         account_configs.append(
             FastlyAccountConfig(
                 account_token=account_cfg["account_token"], services=service_configs
@@ -105,33 +129,48 @@ def parse_config_file(path: Path):
         raise FileNotFoundError(f"Config file at {path} doesn't exist")
     with open(path) as f:
         data = yaml.safe_load(f)
-        crowdsec_data = data["crowdsec_config"]
+
+        # Filter and warn about unknown root-level parameters
+        filtered_data = _filter_and_warn_unknown_fields(
+            data, Config, "root configuration"
+        )
+
+        # Filter and warn about unknown crowdsec_config parameters
+        crowdsec_data = filtered_data["crowdsec_config"]
+        filtered_crowdsec_data = _filter_and_warn_unknown_fields(
+            crowdsec_data, CrowdSecConfig, "crowdsec_config"
+        )
+
         return Config(
             crowdsec_config=CrowdSecConfig(
-                lapi_key=crowdsec_data["lapi_key"],
-                lapi_url=crowdsec_data.get("lapi_url", "http://localhost:8080/"),
-                include_scenarios_containing=crowdsec_data.get(
+                lapi_key=filtered_crowdsec_data["lapi_key"],
+                lapi_url=filtered_crowdsec_data.get(
+                    "lapi_url", "http://localhost:8080/"
+                ),
+                include_scenarios_containing=filtered_crowdsec_data.get(
                     "include_scenarios_containing", []
                 ),
-                exclude_scenarios_containing=crowdsec_data.get(
+                exclude_scenarios_containing=filtered_crowdsec_data.get(
                     "exclude_scenarios_containing", []
                 ),
-                only_include_decisions_from=crowdsec_data.get(
+                only_include_decisions_from=filtered_crowdsec_data.get(
                     "only_include_decisions_from", DEFAULT_DECISION_SOURCES
                 ),
-                insecure_skip_verify=crowdsec_data.get("insecure_skip_verify", False),
-                key_path=crowdsec_data.get("key_path", ""),
-                cert_path=crowdsec_data.get("cert_path", ""),
-                ca_cert_path=crowdsec_data.get("ca_cert_path", ""),
+                insecure_skip_verify=filtered_crowdsec_data.get(
+                    "insecure_skip_verify", False
+                ),
+                key_path=filtered_crowdsec_data.get("key_path", ""),
+                cert_path=filtered_crowdsec_data.get("cert_path", ""),
+                ca_cert_path=filtered_crowdsec_data.get("ca_cert_path", ""),
             ),
             fastly_account_configs=fastly_config_from_dict(
-                data["fastly_account_configs"]
+                filtered_data["fastly_account_configs"]
             ),
-            log_level=data["log_level"],
-            log_mode=data["log_mode"],
-            log_file=data["log_file"],
-            update_frequency=int(data["update_frequency"]),
-            cache_path=data["cache_path"],
+            log_level=filtered_data["log_level"],
+            log_mode=filtered_data["log_mode"],
+            log_file=filtered_data["log_file"],
+            update_frequency=int(filtered_data["update_frequency"]),
+            cache_path=filtered_data["cache_path"],
         )
 
 
