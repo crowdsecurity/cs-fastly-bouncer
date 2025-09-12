@@ -4,7 +4,7 @@ This bouncer creates VCL rules and modifies ACL lists of the provided fastly ser
 
 # Installation using docker image
 
-The bouncer needs config file which contains details about fastly services, tokens etc.
+The bouncer needs a config file which contains details about fastly services, tokens etc.
 
 You can auto generate most of the config via:
 
