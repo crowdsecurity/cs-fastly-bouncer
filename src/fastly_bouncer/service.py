@@ -81,7 +81,7 @@ class ACLCollection:
         total_items = len(self.state)
         if total_items >= self.max_items:
             return False
-            
+
         # Check if item is already present in some ACL
         for acl in self.acls:
             if not acl.is_full():
@@ -107,7 +107,7 @@ class ACLCollection:
     def transform_to_state(self, new_state):
         new_items = new_state - self.state
         expired_items = self.state - new_state
-        
+
         logger.info(
             with_suffix(
                 f"processing {len(new_items)} items to add and {len(expired_items)} items to remove",
@@ -115,7 +115,7 @@ class ACLCollection:
                 action=self.action,
             )
         )
-        
+
         if new_items:
             logger.info(
                 with_suffix(
@@ -380,9 +380,15 @@ class Service:
         item is string representation of IP or Country or AS Number.
         """
         # Log old state count
-        old_state_count = sum(len(acl_collection.state) for acl_collection in self.acl_collection_by_action.values())
-        logger.info(with_suffix(f"Old state contains {old_state_count} decisions", service_id=self.service_id))
-        
+        old_state_count = sum(
+            len(acl_collection.state) for acl_collection in self.acl_collection_by_action.values()
+        )
+        logger.info(
+            with_suffix(
+                f"Old state contains {old_state_count} decisions", service_id=self.service_id
+            )
+        )
+
         new_acl_state_by_action = {action: set() for action in self.supported_actions}
 
         prev_countries_by_action = {

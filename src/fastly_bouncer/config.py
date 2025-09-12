@@ -17,7 +17,9 @@ class CrowdSecConfig:
     lapi_url: str = "http://localhost:8080/"
     include_scenarios_containing: List[str] = field(default_factory=list)
     exclude_scenarios_containing: List[str] = field(default_factory=list)
-    only_include_decisions_from: List[str] = field(default_factory=lambda: DEFAULT_DECISION_SOURCES.copy())
+    only_include_decisions_from: List[str] = field(
+        default_factory=lambda: DEFAULT_DECISION_SOURCES.copy()
+    )
     insecure_skip_verify: bool = False
     key_path: str = ""
     cert_path: str = ""
@@ -102,7 +104,9 @@ def parse_config_file(path: Path):
                 lapi_url=crowdsec_data.get("lapi_url", "http://localhost:8080/"),
                 include_scenarios_containing=crowdsec_data.get("include_scenarios_containing", []),
                 exclude_scenarios_containing=crowdsec_data.get("exclude_scenarios_containing", []),
-                only_include_decisions_from=crowdsec_data.get("only_include_decisions_from", DEFAULT_DECISION_SOURCES),
+                only_include_decisions_from=crowdsec_data.get(
+                    "only_include_decisions_from", DEFAULT_DECISION_SOURCES
+                ),
                 insecure_skip_verify=crowdsec_data.get("insecure_skip_verify", False),
                 key_path=crowdsec_data.get("key_path", ""),
                 cert_path=crowdsec_data.get("cert_path", ""),
@@ -208,7 +212,7 @@ class ConfigGenerator:
     async def edit_config(comma_separated_fastly_tokens: str, existing_config: Config) -> str:
         fastly_tokens = comma_separated_fastly_tokens.split(",")
         fastly_tokens = list(map(lambda token: token.strip(), fastly_tokens))
-        
+
         # Generate new config with fresh data from tokens
         new_config = Config(
             log_level=existing_config.log_level,
@@ -219,15 +223,15 @@ class ConfigGenerator:
             cache_path=existing_config.cache_path,
             bouncer_version=existing_config.bouncer_version,
         )
-        
+
         # Generate fresh account configs with new tokens
         for token in fastly_tokens:
             account_cfg = await ConfigGenerator.generate_config_for_account(token)
             new_config.fastly_account_configs.append(account_cfg)
-        
+
         # Merge service configurations from existing config
         merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
-        
+
         return ConfigGenerator.add_comments(yaml.safe_dump(asdict(merged_config)))
 
     @staticmethod
@@ -237,7 +241,7 @@ class ConfigGenerator:
         for account in existing_config.fastly_account_configs:
             for service in account.services:
                 existing_services[service.id] = service
-        
+
         # Merge configurations for each new account
         for new_account in new_config.fastly_account_configs:
             for i, new_service in enumerate(new_account.services):
@@ -252,7 +256,7 @@ class ConfigGenerator:
                         max_items=existing_service.max_items,
                         captcha_cookie_expiry_duration=existing_service.captcha_cookie_expiry_duration,
                     )
-        
+
         return new_config
 
 

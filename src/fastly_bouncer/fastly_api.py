@@ -82,9 +82,13 @@ async def log_and_raise_on_error(response):
     if response.status_code >= 400:
         try:
             error_body = response.text
-            logger.error(f"HTTP {response.status_code} error for {response.request.method} {response.url}: {error_body}")
+            logger.error(
+                f"HTTP {response.status_code} error for {response.request.method} {response.url}: {error_body}"
+            )
         except Exception:
-            logger.error(f"HTTP {response.status_code} error for {response.request.method} {response.url}")
+            logger.error(
+                f"HTTP {response.status_code} error for {response.request.method} {response.url}"
+            )
         response.raise_for_status()
 
 
@@ -278,23 +282,25 @@ class FastlyAPI:
         acl.entries = {}
         page = 1
         per_page = ENTRIES_PER_PAGE
-        
+
         while True:
             resp = await self.session.get(
-                self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page={per_page}&page={page}")
+                self.api_url(
+                    f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page={per_page}&page={page}"
+                )
             )
             entries_page = resp.json()
-            
+
             # Process entries from this page
             for entry in entries_page:
                 acl.entries[f"{entry['ip']}/{entry['subnet']}"] = entry["id"]
-            
+
             # Check if we've gotten all entries (less than per_page means last page)
             if len(entries_page) < per_page:
                 break
-                
+
             page += 1
-        
+
         logger.debug(with_suffix(f"refreshed {len(acl.entries)} ACL entries", acl_id=acl.id))
         return acl
 
@@ -304,18 +310,24 @@ class FastlyAPI:
         update_entries = []
         successfully_processed_additions = set()
         successfully_processed_deletions = set()
-        
+
         for entry_to_add in acl.entries_to_add:
             if entry_to_add in acl.entries:
-                successfully_processed_additions.add(entry_to_add)  # Already exists, mark as processed
+                successfully_processed_additions.add(
+                    entry_to_add
+                )  # Already exists, mark as processed
                 continue
             network = ipaddress.ip_network(entry_to_add)
             ip, subnet = str(network.network_address), network.prefixlen
-            update_entries.append({"op": "create", "ip": ip, "subnet": subnet, "item": entry_to_add})
+            update_entries.append(
+                {"op": "create", "ip": ip, "subnet": subnet, "item": entry_to_add}
+            )
 
         for entry_to_delete in acl.entries_to_delete:
             if entry_to_delete not in acl.entries:
-                successfully_processed_deletions.add(entry_to_delete)  # Doesn't exist, mark as processed
+                successfully_processed_deletions.add(
+                    entry_to_delete
+                )  # Doesn't exist, mark as processed
                 continue
             update_entries.append(
                 {
@@ -331,21 +343,38 @@ class FastlyAPI:
             acl.entries_to_delete -= successfully_processed_deletions
             return
 
-        logger.debug(with_suffix(f"processing {len(update_entries)} operations in batches of {ACL_BATCH_SIZE}", acl_id=acl.id))
+        logger.debug(
+            with_suffix(
+                f"processing {len(update_entries)} operations in batches of {ACL_BATCH_SIZE}",
+                acl_id=acl.id,
+            )
+        )
 
         # Only ACL_BATCH_SIZE operations per request can be done on an acl.
         async def process_batch(batch_entries, batch_idx):
             try:
                 # Remove the tracking field before sending to API
-                api_batch = [{k: v for k, v in entry.items() if k != "item"} for entry in batch_entries]
+                api_batch = [
+                    {k: v for k, v in entry.items() if k != "item"} for entry in batch_entries
+                ]
                 request_body = {"entries": api_batch}
                 await self.session.patch(
                     self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries"),
-                    json=request_body
+                    json=request_body,
                 )
-                logger.debug(with_suffix(f"successfully processed batch {batch_idx} with {len(batch_entries)} operations", acl_id=acl.id))
+                logger.debug(
+                    with_suffix(
+                        f"successfully processed batch {batch_idx} with {len(batch_entries)} operations",
+                        acl_id=acl.id,
+                    )
+                )
             except Exception as e:
-                logger.error(with_suffix(f"failed to process batch {batch_idx} with {len(batch_entries)} operations: {e}", acl_id=acl.id))
+                logger.error(
+                    with_suffix(
+                        f"failed to process batch {batch_idx} with {len(batch_entries)} operations: {e}",
+                        acl_id=acl.id,
+                    )
+                )
                 # Remove items from successfully_processed sets since they failed
                 for entry in batch_entries:
                     if entry["op"] == "create":
@@ -362,17 +391,22 @@ class FastlyAPI:
                     successfully_processed_additions.add(entry["item"])
                 elif entry["op"] == "delete":
                     successfully_processed_deletions.add(entry["item"])
-            
+
             batch_idx = i // ACL_BATCH_SIZE + 1
             await process_batch(update_entries_batch, batch_idx)
 
         acl = await self.refresh_acl_entries(acl)
-        
+
         # Remove all items that were successfully sent to the API
         acl.entries_to_add -= successfully_processed_additions
         acl.entries_to_delete -= successfully_processed_deletions
-        
-        logger.debug(with_suffix(f"cleared {len(successfully_processed_additions)} additions and {len(successfully_processed_deletions)} deletions from pending", acl_id=acl.id))
+
+        logger.debug(
+            with_suffix(
+                f"cleared {len(successfully_processed_additions)} additions and {len(successfully_processed_deletions)} deletions from pending",
+                acl_id=acl.id,
+            )
+        )
 
     @staticmethod
     def api_url(endpoint: str) -> str:

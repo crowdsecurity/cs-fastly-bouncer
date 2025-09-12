@@ -222,21 +222,29 @@ def set_logger(config: Config):
     logger.info(f"Starting fastly-bouncer-v{VERSION}")
 
 
-def buildClientParams(config:  Config):
+def buildClientParams(config: Config):
     global VERSION
 
     # Build StreamClient parameters
-    client_params = {"api_key": config.crowdsec_config.lapi_key, "lapi_url": config.crowdsec_config.lapi_url,
-                     "interval": config.update_frequency, "user_agent": f"fastly-bouncer/v{VERSION}",
-                     "scopes": ("ip", "range", "country", "as"),
-                     "only_include_decisions_from": tuple(config.crowdsec_config.only_include_decisions_from)}
+    client_params = {
+        "api_key": config.crowdsec_config.lapi_key,
+        "lapi_url": config.crowdsec_config.lapi_url,
+        "interval": config.update_frequency,
+        "user_agent": f"fastly-bouncer/v{VERSION}",
+        "scopes": ("ip", "range", "country", "as"),
+        "only_include_decisions_from": tuple(config.crowdsec_config.only_include_decisions_from),
+    }
 
     # Include/exclude scenarios
     if config.crowdsec_config.include_scenarios_containing:
-        client_params["include_scenarios_containing"] = tuple(config.crowdsec_config.include_scenarios_containing)
+        client_params["include_scenarios_containing"] = tuple(
+            config.crowdsec_config.include_scenarios_containing
+        )
 
     if config.crowdsec_config.exclude_scenarios_containing:
-        client_params["exclude_scenarios_containing"] = tuple(config.crowdsec_config.exclude_scenarios_containing)
+        client_params["exclude_scenarios_containing"] = tuple(
+            config.crowdsec_config.exclude_scenarios_containing
+        )
 
     # SSL/TLS options
     if config.crowdsec_config.insecure_skip_verify:
@@ -256,7 +264,7 @@ def buildClientParams(config:  Config):
 
 async def run(config: Config, services: List[Service]):
     global VERSION
-    
+
     # Build StreamClient parameters
     client_params = buildClientParams(config)
 
@@ -310,14 +318,12 @@ async def start(config: Config, cleanup_mode):
 
 def main():
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument(
-        "-c",
-        type=Path,
-        help="Path to configuration file."
-    )
+    arg_parser.add_argument("-c", type=Path, help="Path to configuration file.")
     arg_parser.add_argument("-d", help="Whether to cleanup resources.", action="store_true")
     arg_parser.add_argument(
-        "-e", help="Edit existing config with new tokens (requires both -g and -c).", action="store_true"
+        "-e",
+        help="Edit existing config with new tokens (requires both -g and -c).",
+        action="store_true",
     )
     arg_parser.add_argument("-g", type=str, help="Comma separated tokens to generate config for.")
     arg_parser.add_argument("-o", type=str, help="Path to file to output the generated config.")
@@ -337,13 +343,13 @@ def main():
             print("Edit mode (-e) cannot be used with output file (-o)", file=sys.stderr)
             arg_parser.print_help()
             sys.exit(1)
-    
+
     # Handle config generation
     if args.g and not args.e:
         gc = trio.run(ConfigGenerator().generate_config, args.g)
         print_config(gc, args.o)
         sys.exit(0)
-    
+
     # Handle config editing
     if args.e:
         if not args.c.exists():
@@ -352,17 +358,17 @@ def main():
         try:
             existing_config = parse_config_file(args.c)
             edited_config = trio.run(ConfigGenerator().edit_config, args.g, existing_config)
-            
+
             # Write the edited config back to the original file
             with open(args.c, "w") as f:
                 f.write(edited_config)
-            
+
             print(f"Config successfully updated: {args.c}")
             sys.exit(0)
         except Exception as e:
             print(f"got error {e} while editing config at {args.c}", file=sys.stderr)
             sys.exit(1)
-    
+
     # Handle normal run
     if not args.g:
         if not args.c:
