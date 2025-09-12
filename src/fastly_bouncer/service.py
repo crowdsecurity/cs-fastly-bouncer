@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Set
 
 import trio
-
 from fastly_bouncer import vcl_templates
 from fastly_bouncer.fastly_api import ACL, VCL, FastlyAPI
 from fastly_bouncer.utils import with_suffix

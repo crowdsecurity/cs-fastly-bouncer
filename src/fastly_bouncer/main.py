@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import List
 
 import trio
-from pycrowdsec.client import StreamClient
-
 from fastly_bouncer.config import (
     Config,
     ConfigGenerator,
@@ -28,6 +26,7 @@ from fastly_bouncer.utils import (
     get_default_logger,
     with_suffix,
 )
+from pycrowdsec.client import StreamClient
 
 logger: logging.Logger = get_default_logger()
 

@@ -8,7 +8,6 @@ from urllib.parse import urljoin
 import httpx
 import trio
 from dateutil.parser import parse as parse_date
-
 from fastly_bouncer.utils import with_suffix
 
 logger: logging.Logger = logging.getLogger("")

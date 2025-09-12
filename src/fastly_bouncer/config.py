@@ -6,7 +6,6 @@ from typing import Dict, List, Optional
 
 import trio
 import yaml
-
 from fastly_bouncer.fastly_api import FastlyAPI
 from fastly_bouncer.utils import DEFAULT_DECISION_SOURCES, VERSION, are_filled_validator
 
