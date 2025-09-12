@@ -235,3 +235,127 @@ class TestConfigGeneration(TestCase):
         self.assertEqual(merged_service.recaptcha_secret_key, "real_secret_key")
         self.assertTrue(merged_service.activate)
         self.assertEqual(merged_service.max_items, 25000)
+
+    def test_fastly_service_config_with_reference_version(self):
+        """Test FastlyServiceConfig with reference_version parameter"""
+        service_config = FastlyServiceConfig(
+            id="test_service",
+            recaptcha_site_key="site_key",
+            recaptcha_secret_key="secret_key",
+            reference_version="42"
+        )
+        
+        self.assertEqual(service_config.reference_version, "42")
+        
+    def test_fastly_service_config_with_none_reference_version(self):
+        """Test FastlyServiceConfig with None reference_version (default)"""
+        service_config = FastlyServiceConfig(
+            id="test_service", 
+            recaptcha_site_key="site_key",
+            recaptcha_secret_key="secret_key"
+        )
+        
+        self.assertIsNone(service_config.reference_version)
+
+    def test_merge_service_configs_with_reference_version(self):
+        """Test merging preserves new reference_version"""
+        # Create existing config with reference_version
+        existing_service = FastlyServiceConfig(
+            id="service1",
+            recaptcha_site_key="existing_site_key",
+            recaptcha_secret_key="existing_secret",
+            activate=True,
+            reference_version="5"
+        )
+        existing_account = FastlyAccountConfig(
+            account_token="existing_token",
+            services=[existing_service]
+        )
+        existing_config = Config(
+            log_level="info",
+            log_mode="stdout",
+            log_file="/var/log/test.log", 
+            update_frequency=30,
+            crowdsec_config=CrowdSecConfig(lapi_key="test_key"),
+            fastly_account_configs=[existing_account]
+        )
+        
+        # Create new config with different reference_version
+        new_service = FastlyServiceConfig(
+            id="service1",
+            recaptcha_site_key="<RECAPTCHA_SITE_KEY>",
+            recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
+            activate=False,
+            reference_version="10"
+        )
+        new_account = FastlyAccountConfig(
+            account_token="new_token",
+            services=[new_service]
+        )
+        new_config = Config(
+            log_level="debug",
+            log_mode="file",
+            log_file="/var/log/new.log",
+            update_frequency=60,
+            crowdsec_config=CrowdSecConfig(lapi_key="new_key"),
+            fastly_account_configs=[new_account]
+        )
+        
+        # Merge configurations
+        merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
+        
+        # Verify existing service config preserved but new reference_version used
+        merged_service = merged_config.fastly_account_configs[0].services[0]
+        self.assertEqual(merged_service.recaptcha_site_key, "existing_site_key")
+        self.assertEqual(merged_service.recaptcha_secret_key, "existing_secret")
+        self.assertTrue(merged_service.activate)  # Preserved from existing
+        self.assertEqual(merged_service.reference_version, "10")  # From new config
+
+    def test_merge_service_configs_with_none_reference_version(self):
+        """Test merging when new config has None reference_version"""
+        # Create existing config with reference_version
+        existing_service = FastlyServiceConfig(
+            id="service1",
+            recaptcha_site_key="existing_site_key",
+            recaptcha_secret_key="existing_secret",
+            reference_version="5"
+        )
+        existing_account = FastlyAccountConfig(
+            account_token="existing_token",
+            services=[existing_service]
+        )
+        existing_config = Config(
+            log_level="info",
+            log_mode="stdout",
+            log_file="/var/log/test.log", 
+            update_frequency=30,
+            crowdsec_config=CrowdSecConfig(lapi_key="test_key"),
+            fastly_account_configs=[existing_account]
+        )
+        
+        # Create new config with None reference_version
+        new_service = FastlyServiceConfig(
+            id="service1",
+            recaptcha_site_key="<RECAPTCHA_SITE_KEY>",
+            recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
+            reference_version=None
+        )
+        new_account = FastlyAccountConfig(
+            account_token="new_token",
+            services=[new_service]
+        )
+        new_config = Config(
+            log_level="debug",
+            log_mode="file",
+            log_file="/var/log/new.log",
+            update_frequency=60,
+            crowdsec_config=CrowdSecConfig(lapi_key="new_key"),
+            fastly_account_configs=[new_account]
+        )
+        
+        # Merge configurations
+        merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
+        
+        # reference_version should be None from new config
+        merged_service = merged_config.fastly_account_configs[0].services[0]
+        self.assertIsNone(merged_service.reference_version)

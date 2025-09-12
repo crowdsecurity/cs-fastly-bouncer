@@ -2,7 +2,7 @@ import logging
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import trio
 import yaml
@@ -39,9 +39,12 @@ class FastlyServiceConfig:
     activate: bool = False
     max_items: int = 20000
     captcha_cookie_expiry_duration: str = "1800"
+    reference_version: Optional[str] = None
 
     def __post_init__(self):
-        are_filled_validator(**{key: getattr(self, key) for key in asdict(self).keys()})
+        # Exclude reference_version from validation since it can be None
+        fields_to_validate = {key: getattr(self, key) for key in asdict(self).keys() if key != "reference_version"}
+        are_filled_validator(**fields_to_validate)
 
 
 @dataclass
@@ -171,6 +174,10 @@ class ConfigGenerator:
                 )
                 continue
 
+            if "reference_version:" in line:
+                lines[i] = f"{line}  # Optional: specify a specific version to clone from instead of the active version"
+                continue
+
         return "\n".join(lines)
 
     @staticmethod
@@ -247,7 +254,7 @@ class ConfigGenerator:
             for i, new_service in enumerate(new_account.services):
                 if new_service.id in existing_services:
                     existing_service = existing_services[new_service.id]
-                    # Preserve existing service configuration
+                    # Preserve existing service configuration but use new reference_version
                     new_account.services[i] = FastlyServiceConfig(
                         id=new_service.id,
                         recaptcha_site_key=existing_service.recaptcha_site_key,
@@ -255,6 +262,7 @@ class ConfigGenerator:
                         activate=existing_service.activate,
                         max_items=existing_service.max_items,
                         captcha_cookie_expiry_duration=existing_service.captcha_cookie_expiry_duration,
+                        reference_version=new_service.reference_version,
                     )
 
         return new_config

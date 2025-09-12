@@ -58,7 +58,7 @@ crowdsec_config:
   key_path: ''
 
 fastly_account_configs:
-  - account_token: <FASTLY_ACCOUNT_TOKEN> # Obtain this from fastly
+  - account_token: <FASTLY_ACCOUNT_TOKEN> # Get this from fastly
     services: 
       - id: <FASTLY_SERVICE_ID> # The id of the service
         recaptcha_site_key: <RECAPTCHA_SITE_KEY> # Required for captcha support
@@ -66,6 +66,7 @@ fastly_account_configs:
         max_items: 20000 # max_items refers to the capacity of IP/IP ranges to ban/captcha. 
         activate: false # Set to true, to activate the new config in production
         captcha_cookie_expiry_duration: '1800'  # Duration to persist the cookie containing proof of solving captcha
+        reference_version: null # # Optional: specify a specific version to clone from instead of the active version
 
 update_frequency: 10 # Duration in seconds to poll the crowdsec API
 log_level: info # Valid choices are either of "debug","info","warning","error"

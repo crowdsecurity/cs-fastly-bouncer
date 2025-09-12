@@ -89,7 +89,12 @@ async def setup_service(
     service_id = service_cfg.id
     if cleanup_mode:
         comment = "Clone cleaned from CrowdSec resources"
-    version_to_clone = await fastly_api.get_version_to_clone(service_id)
+    
+    # Use reference_version if provided, otherwise get the active version
+    if service_cfg.reference_version:
+        version_to_clone = service_cfg.reference_version
+    else:
+        version_to_clone = await fastly_api.get_version_to_clone(service_id)
     version = await fastly_api.clone_version_for_service_from_given_version(
         service_cfg.id, version_to_clone, comment
     )
