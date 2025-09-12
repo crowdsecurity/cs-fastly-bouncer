@@ -48,7 +48,6 @@ async def setup_action_for_service(
     action: str,
     service_cfg: FastlyServiceConfig,
     service_version,
-    sender_chan,
 ) -> ACLCollection:
 
     acl_count = ceil(service_cfg.max_items / ACL_CAPACITY)
@@ -74,8 +73,7 @@ async def setup_action_for_service(
             service_id=service_cfg.id,
         )
     )
-    async with sender_chan:
-        await sender_chan.send(acl_collection)
+    return acl_collection
 
 
 async def setup_service(
@@ -127,21 +125,10 @@ async def setup_service(
 
     acl_collection_by_action = {}
     for action in SUPPORTED_ACTIONS:
-        sender, receiver = trio.open_memory_channel(0)
-        async with trio.open_nursery() as n:
-            async with sender:
-                n.start_soon(
-                    setup_action_for_service,
-                    fastly_api,
-                    action,
-                    service_cfg,
-                    version,
-                    sender.clone(),
-                )
-
-            async with receiver:
-                async for acl_collection in receiver:
-                    acl_collection_by_action[acl_collection.action] = acl_collection
+        acl_collection = await setup_action_for_service(
+            fastly_api, action, service_cfg, version
+        )
+        acl_collection_by_action[action] = acl_collection
 
     async with sender_chan:
         s = Service(

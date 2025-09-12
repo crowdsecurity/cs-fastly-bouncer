@@ -46,32 +46,27 @@ class ACLCollection:
             "state": list(self.state),
         }
 
-    async def create_acl(self, i, sender_chan):
-        acl_name = f"crowdsec_{self.action}_{i}"
-        logger.info(
-            with_suffix(f"creating acl {acl_name} ", service_id=self.service_id)
-        )
-        acl = await self.api.create_acl_for_service(
-            service_id=self.service_id, version=self.version, name=acl_name
-        )
-        logger.info(with_suffix(f"created acl {acl_name}", service_id=self.service_id))
-        async with sender_chan:
-            await sender_chan.send(acl)
-
-    async def create_acls(self, acl_count: int) -> None:
+    async def create_acls(self, acl_count: int) -> List[ACL]:
         """
-        Provisions ACLs
+        Provisions ACLs in sequential order with guaranteed ordering
         """
-        acls = []
-        sender, receiver = trio.open_memory_channel(0)
-        async with trio.open_nursery() as n:
-            async with sender:
-                for i in range(acl_count):
-                    n.start_soon(self.create_acl, i, sender.clone())
+        acls = [None] * acl_count  # Pre-allocate list with correct size
+        for i in range(acl_count):
+            acl_name = f"crowdsec_{self.action}_{i}"
+            logger.info(
+                with_suffix(f"creating acl {acl_name} ", service_id=self.service_id)
+            )
+            acl = await self.api.create_acl_for_service(
+                service_id=self.service_id, version=self.version, name=acl_name
+            )
+            logger.info(
+                with_suffix(f"created acl {acl_name}", service_id=self.service_id)
+            )
+            acls[i] = acl  # Place ACL at correct index position
 
-            async with receiver:
-                async for acl in receiver:
-                    acls.append(acl)
+            # Small delay to ensure proper ordering at Fastly API level
+            if i < acl_count - 1:  # Don't delay after the last ACL
+                await trio.sleep(0.5)
         return acls
 
     def insert_item(self, item: str) -> bool:
