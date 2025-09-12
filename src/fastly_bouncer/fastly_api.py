@@ -13,7 +13,6 @@ from fastly_bouncer.utils import with_suffix
 
 logger: logging.Logger = logging.getLogger("")
 
-
 ACL_CAPACITY = 1000  # Max number of entries an ACL can hold
 ACL_BATCH_SIZE = 1000  # Max number of entries that can be added/removed in a single API call
 ENTRIES_PER_PAGE = 1000
@@ -223,7 +222,10 @@ class FastlyAPI:
                 f"/service/{service_id}/version/{resp['number']}",
             ),
             json={
-                "comment": f"Created by CrowdSec. {comment} Cloned from version {version}. Created at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                "comment": (
+                    f"Created by CrowdSec. {comment} Cloned from version {version}. "
+                    f"Created at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                )
             },
         )
         tmp.json()
@@ -401,9 +403,11 @@ class FastlyAPI:
         acl.entries_to_add -= successfully_processed_additions
         acl.entries_to_delete -= successfully_processed_deletions
 
+        additions = len(successfully_processed_additions)
+        deletions = len(successfully_processed_deletions)
         logger.debug(
             with_suffix(
-                f"cleared {len(successfully_processed_additions)} additions and {len(successfully_processed_deletions)} deletions from pending",
+                f"cleared {additions} additions and {deletions} deletions from pending",
                 acl_id=acl.id,
             )
         )

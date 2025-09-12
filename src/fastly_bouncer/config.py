@@ -1,14 +1,14 @@
 import logging
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List
 
 import trio
 import yaml
-import sys
 
 from fastly_bouncer.fastly_api import FastlyAPI
-from fastly_bouncer.utils import are_filled_validator, VERSION, DEFAULT_DECISION_SOURCES
+from fastly_bouncer.utils import DEFAULT_DECISION_SOURCES, VERSION, are_filled_validator
 
 
 @dataclass
@@ -87,9 +87,9 @@ class Config:
     def __post_init__(self):
         for i, account_config in enumerate(self.fastly_account_configs):
             if not account_config.account_token:
-                raise ValueError(f" {i+1}th has no token specified in config")
+                raise ValueError(f" {i + 1}th has no token specified in config")
             if not account_config.services:
-                raise ValueError(f" {i+1}th has no service specified in config")
+                raise ValueError(f" {i + 1}th has no service specified in config")
 
 
 def parse_config_file(path: Path):

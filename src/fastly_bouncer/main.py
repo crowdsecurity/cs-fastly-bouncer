@@ -102,7 +102,7 @@ async def setup_service(
 
     logger.info(
         with_suffix(
-            f"cleaning existing crowdsec resources (if any)",
+            "cleaning existing crowdsec resources (if any)",
             service_id=service_cfg.id,
             version=version,
         )
@@ -115,7 +115,7 @@ async def setup_service(
 
     logger.info(
         with_suffix(
-            f"cleaned existing crowdsec resources (if any)",
+            "cleaned existing crowdsec resources (if any)",
             service_id=service_cfg.id,
             version=version,
         )
@@ -182,7 +182,7 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
             else:
                 cache = json.loads(s)
                 services = list(map(Service.from_jsonable_dict, cache["service_states"]))
-                logger.info(f"loaded existing infra using cache")
+                logger.info("loaded existing infra using cache")
                 if not cleanup_mode:
                     return services
     else:
@@ -207,7 +207,6 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
 
 
 def set_logger(config: Config):
-    global logger
     list(map(logger.removeHandler, logger.handlers))
     logger.setLevel(config.get_log_level())
     if config.log_mode == "stdout":
@@ -216,6 +215,8 @@ def set_logger(config: Config):
         handler = logging.StreamHandler(sys.stderr)
     elif config.log_mode == "file":
         handler = RotatingFileHandler(config.log_file, mode="a+")
+    else:
+        raise ValueError(f"unknown log mode {config.log_mode}")
     formatter = CustomFormatter()
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -223,8 +224,6 @@ def set_logger(config: Config):
 
 
 def buildClientParams(config: Config):
-    global VERSION
-
     # Build StreamClient parameters
     client_params = {
         "api_key": config.crowdsec_config.lapi_key,
@@ -263,8 +262,6 @@ def buildClientParams(config: Config):
 
 
 async def run(config: Config, services: List[Service]):
-    global VERSION
-
     # Build StreamClient parameters
     client_params = buildClientParams(config)
 
@@ -309,7 +306,7 @@ async def start(config: Config, cleanup_mode):
     if cleanup_mode:
         if Path(config.cache_path).exists():
             logger.info("cleaning cache")
-            with open(config.cache_path, "w") as f:
+            with open(config.cache_path, "w") as _:
                 pass
         return
 

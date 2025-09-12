@@ -141,7 +141,8 @@ class ACLCollection:
             if not self.insert_item(new_item):
                 logger.warning(
                     with_suffix(
-                        f"acl_collection for {self.action} has reached configured max_items limit ({self.max_items} items). Ignoring remaining items.",
+                        f"acl_collection for {self.action} has reached configured max_items limit "
+                        f"({self.max_items} items). Ignoring remaining items.",
                         service_id=self.service_id,
                     )
                 )
@@ -336,7 +337,7 @@ class Service:
         if not self.static_vcls and "captcha" in self.supported_actions:
             self.static_vcls = [
                 VCL(
-                    name=f"crowdsec_captcha_renderer",
+                    name="crowdsec_captcha_renderer",
                     service_id=self.service_id,
                     action=vcl_templates.CAPTCHA_RENDER_VCL.format(
                         RECAPTCHA_SITE_KEY=self.recaptcha_site_key
@@ -345,7 +346,7 @@ class Service:
                     type="error",
                 ),
                 VCL(
-                    name=f"crowdsec_captcha_validator",
+                    name="crowdsec_captcha_validator",
                     service_id=self.service_id,
                     action=vcl_templates.CAPTCHA_VALIDATOR_VCL.format(
                         JWT_SECRET=jwt_secret,
@@ -355,7 +356,7 @@ class Service:
                     type="deliver",
                 ),
                 VCL(
-                    name=f"crowdsec_captcha_google_backend",
+                    name="crowdsec_captcha_google_backend",
                     service_id=self.service_id,
                     action=vcl_templates.GOOGLE_BACKEND.format(SERVICE_ID=self.service_id),
                     version=self.version,
