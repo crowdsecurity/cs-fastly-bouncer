@@ -34,8 +34,6 @@ class FastlyServiceConfig:
     id: str
     recaptcha_site_key: str
     recaptcha_secret_key: str
-    reference_version: str
-    clone_reference_version: bool = True
     activate: bool = False
     max_items: int = 20000
     captcha_cookie_expiry_duration: str = "1800"
@@ -125,7 +123,7 @@ def default_config():
         log_mode="stdout",
         log_file="/var/log/crowdsec-fastly-bouncer.log",  # FIXME: This needs root permissions
         crowdsec_config=CrowdSecConfig(lapi_key="<LAPI_KEY>"),
-        update_frequency="10",
+        update_frequency=10,
     )
 
 
@@ -135,7 +133,7 @@ class ConfigGenerator:
     @staticmethod
     async def generate_config(
         comma_separated_fastly_tokens: str, base_config: Config = default_config()
-    ) -> Config:
+    ) -> str:
         fastly_tokens = comma_separated_fastly_tokens.split(",")
         fastly_tokens = list(map(lambda token: token.strip(), fastly_tokens))
         for token in fastly_tokens:
@@ -163,16 +161,6 @@ class ConfigGenerator:
                 lines[i] = f"{line}  # Set to true, to activate the new config in production"
                 continue
 
-            if "clone_reference_version:" in line:
-                lines[i] = (
-                    f"{line}  # Set to false, to modify 'reference_version' instead of cloning it "
-                )
-                continue
-
-            if "reference_version:" in line:
-                lines[i] = f"{line}  # Service version to clone/modify"
-                continue
-
             if "captcha_cookie_expiry_duration" in line:
                 lines[i] = (
                     f"{line}  # Duration(in second) to persist the cookie containing proof of solving captcha"
@@ -181,8 +169,8 @@ class ConfigGenerator:
 
         return "\n".join(lines)
 
-    async def generate_config_for_service(api: FastlyAPI, service_id: str, sender_chan):
-        ref_version = await api.get_version_to_clone(service_id)
+    @staticmethod
+    async def generate_config_for_service(service_id: str, sender_chan):
         async with sender_chan:
             await sender_chan.send(
                 FastlyServiceConfig(
@@ -190,11 +178,10 @@ class ConfigGenerator:
                     recaptcha_site_key="<RECAPTCHA_SITE_KEY>",
                     recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
                     activate=False,
-                    clone_reference_version=True,
-                    reference_version=ref_version,
                 )
             )
 
+    @staticmethod
     async def generate_config_for_account(fastly_token: str) -> FastlyAccountConfig:
         api = FastlyAPI(fastly_token)
         service_ids_with_name = await api.get_all_service_ids(with_name=True)
@@ -208,7 +195,7 @@ class ConfigGenerator:
             async with sender:
                 for service_id in service_ids:
                     n.start_soon(
-                        ConfigGenerator.generate_config_for_service, api, service_id, sender.clone()
+                        ConfigGenerator.generate_config_for_service, service_id, sender.clone()
                     )
 
             async with receiver:
@@ -256,13 +243,11 @@ class ConfigGenerator:
             for i, new_service in enumerate(new_account.services):
                 if new_service.id in existing_services:
                     existing_service = existing_services[new_service.id]
-                    # Preserve existing service configuration, only update reference_version
+                    # Preserve existing service configuration
                     new_account.services[i] = FastlyServiceConfig(
                         id=new_service.id,
                         recaptcha_site_key=existing_service.recaptcha_site_key,
                         recaptcha_secret_key=existing_service.recaptcha_secret_key,
-                        reference_version=new_service.reference_version,  # Use latest from API
-                        clone_reference_version=existing_service.clone_reference_version,
                         activate=existing_service.activate,
                         max_items=existing_service.max_items,
                         captcha_cookie_expiry_duration=existing_service.captcha_cookie_expiry_duration,

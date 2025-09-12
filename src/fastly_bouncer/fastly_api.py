@@ -2,7 +2,6 @@ import datetime
 import ipaddress
 import logging
 from dataclasses import asdict, dataclass, field
-from functools import partial
 from typing import Dict, List, Set
 from urllib.parse import urljoin
 
@@ -206,7 +205,7 @@ class FastlyAPI:
         self, service_id: str, version: str, comment=""
     ) -> str:
         """
-        Creates new version for service.
+        Creates a new version for service.
         Returns the new version.
         """
         if not comment:
@@ -256,11 +255,6 @@ class FastlyAPI:
             vcl = await self.update_dynamic_vcl(vcl)
         return vcl
 
-    async def is_service_version_locked(self, service_id, version) -> bool:
-        resp = await self.session.get(self.api_url(f"/service/{service_id}/version/{version}"))
-        resp = resp.json()
-        return resp["locked"]
-
     async def create_vcl(self, vcl: VCL):
         if vcl.id:
             return vcl
@@ -280,7 +274,7 @@ class FastlyAPI:
         resp.json()
         return vcl
 
-    async def refresh_acl_entries(self, acl: ACL) -> Dict[str, str]:
+    async def refresh_acl_entries(self, acl: ACL) -> ACL:
         acl.entries = {}
         page = 1
         per_page = ENTRIES_PER_PAGE

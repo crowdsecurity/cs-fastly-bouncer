@@ -85,34 +85,20 @@ async def setup_service(
     cleanup_mode: bool,
     sender_chan: trio.MemorySendChannel,
 ):
-    if service_cfg.clone_reference_version or (
-        cleanup_mode
-        and (
-            await fastly_api.is_service_version_locked(
-                service_cfg.id, service_cfg.reference_version
-            )
+    comment = None
+    service_id = service_cfg.id
+    if cleanup_mode:
+        comment = "Clone cleaned from CrowdSec resources"
+    version_to_clone = await fastly_api.get_version_to_clone(service_id)
+    version = await fastly_api.clone_version_for_service_from_given_version(
+        service_cfg.id, version_to_clone, comment
+    )
+    logger.info(
+        with_suffix(
+            f"new version {version} for service created",
+            service_id=service_id,
         )
-    ):
-        comment = None
-        if cleanup_mode:
-            comment = "Clone cleaned from CrowdSec resources"
-        version = await fastly_api.clone_version_for_service_from_given_version(
-            service_cfg.id, service_cfg.reference_version, comment
-        )
-        logger.info(
-            with_suffix(
-                f"new version {version} for service created",
-                service_id=service_cfg.id,
-            )
-        )
-    else:
-        version = service_cfg.reference_version
-        logger.info(
-            with_suffix(
-                f"using existing version {service_cfg.reference_version}",
-                service_id=service_cfg.id,
-            )
-        )
+    )
 
     logger.info(
         with_suffix(
