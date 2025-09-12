@@ -1,17 +1,17 @@
-import unittest
 import logging
 import sys
-from unittest.mock import MagicMock, patch
+import unittest
 from io import StringIO
+from unittest.mock import patch
 
 from fastly_bouncer.utils import (
+    DEFAULT_DECISION_SOURCES,
+    SUPPORTED_ACTIONS,
+    VERSION,
     CustomFormatter,
-    with_suffix,
     are_filled_validator,
     get_default_logger,
-    SUPPORTED_ACTIONS,
-    DEFAULT_DECISION_SOURCES,
-    VERSION
+    with_suffix,
 )
 
 
@@ -29,11 +29,11 @@ class TestCustomFormatter(unittest.TestCase):
             lineno=42,
             msg="Test error message",
             args=(),
-            exc_info=None
+            exc_info=None,
         )
-        
+
         result = self.formatter.format(record)
-        
+
         # Should include timestamp, level, and message but not filename/lineno for ERROR
         self.assertIn("ERROR", result)
         self.assertIn("Test error message", result)
@@ -48,11 +48,11 @@ class TestCustomFormatter(unittest.TestCase):
             lineno=42,
             msg="Test warning message",
             args=(),
-            exc_info=None
+            exc_info=None,
         )
-        
+
         result = self.formatter.format(record)
-        
+
         # Should include timestamp, level, and message but not filename/lineno for WARNING
         self.assertIn("WARNING", result)
         self.assertIn("Test warning message", result)
@@ -67,11 +67,11 @@ class TestCustomFormatter(unittest.TestCase):
             lineno=42,
             msg="Test debug message",
             args=(),
-            exc_info=None
+            exc_info=None,
         )
-        
+
         result = self.formatter.format(record)
-        
+
         # Should include timestamp, level, message, AND filename/lineno for DEBUG
         self.assertIn("DEBUG", result)
         self.assertIn("Test debug message", result)
@@ -86,11 +86,11 @@ class TestCustomFormatter(unittest.TestCase):
             lineno=42,
             msg="Test info message",
             args=(),
-            exc_info=None
+            exc_info=None,
         )
-        
+
         result = self.formatter.format(record)
-        
+
         # Should use default format for INFO level
         self.assertIn("INFO", result)
         self.assertIn("Test info message", result)
@@ -100,9 +100,9 @@ class TestCustomFormatter(unittest.TestCase):
         """Test that FORMATS dictionary has expected keys"""
         expected_keys = {logging.ERROR, logging.WARNING, logging.DEBUG, "DEFAULT"}
         actual_keys = set(self.formatter.FORMATS.keys())
-        
+
         self.assertEqual(actual_keys, expected_keys)
-        
+
         # Verify each format contains expected placeholders
         for format_str in self.formatter.FORMATS.values():
             self.assertIn("%(asctime)s", format_str)
@@ -114,13 +114,13 @@ class TestWithSuffix(unittest.TestCase):
     def test_with_suffix_single_kwarg(self):
         """Test with_suffix with a single keyword argument"""
         result = with_suffix("Processing request", service_id="svc123")
-        
+
         self.assertEqual(result, "Processing request service_id=svc123")
 
     def test_with_suffix_multiple_kwargs(self):
         """Test with_suffix with multiple keyword arguments"""
         result = with_suffix("Processing request", service_id="svc123", version="2", action="ban")
-        
+
         # Arguments should be sorted alphabetically
         expected = "Processing request action=ban service_id=svc123 version=2"
         self.assertEqual(result, expected)
@@ -128,27 +128,27 @@ class TestWithSuffix(unittest.TestCase):
     def test_with_suffix_no_kwargs(self):
         """Test with_suffix with no keyword arguments"""
         result = with_suffix("Simple message")
-        
+
         self.assertEqual(result, "Simple message ")
 
     def test_with_suffix_empty_string(self):
         """Test with_suffix with empty base string"""
         result = with_suffix("", service_id="svc123", action="captcha")
-        
+
         expected = " action=captcha service_id=svc123"
         self.assertEqual(result, expected)
 
     def test_with_suffix_numeric_values(self):
         """Test with_suffix with numeric values"""
         result = with_suffix("Stats", count=42, rate=3.14)
-        
+
         expected = "Stats count=42 rate=3.14"
         self.assertEqual(result, expected)
 
     def test_with_suffix_special_characters(self):
         """Test with_suffix with special characters in values"""
         result = with_suffix("Message", path="/var/log/file.log", query="name=test&active=true")
-        
+
         # Keys should be sorted, values should be preserved as-is
         expected = "Message path=/var/log/file.log query=name=test&active=true"
         self.assertEqual(result, expected)
@@ -167,19 +167,19 @@ class TestAreFilledValidator(unittest.TestCase):
         """Test validator with None value raises exception"""
         with self.assertRaises(ValueError) as context:
             are_filled_validator(name="test", value=None, count=42)
-        
+
         self.assertIn("value is not specified in config", str(context.exception))
 
     def test_are_filled_validator_multiple_none(self):
         """Test validator with multiple None values raises for first one"""
         with self.assertRaises(ValueError) as context:
             are_filled_validator(name=None, value=None, count=42)
-        
+
         # Should raise for the first None value encountered (order may vary)
         error_msg = str(context.exception)
         self.assertTrue(
-            "name is not specified in config" in error_msg or 
-            "value is not specified in config" in error_msg
+            "name is not specified in config" in error_msg
+            or "value is not specified in config" in error_msg
         )
 
     def test_are_filled_validator_empty_string(self):
@@ -220,7 +220,7 @@ class TestGetDefaultLogger(unittest.TestCase):
     def test_get_default_logger_returns_logger(self):
         """Test that get_default_logger returns a logger instance"""
         logger = get_default_logger()
-        
+
         self.assertIsInstance(logger, logging.Logger)
         # Root logger name can be "" or "root" depending on Python version
         self.assertIn(logger.name, ["", "root"])
@@ -228,7 +228,7 @@ class TestGetDefaultLogger(unittest.TestCase):
     def test_get_default_logger_adds_handler(self):
         """Test that get_default_logger adds a StreamHandler"""
         logger = get_default_logger()
-        
+
         self.assertEqual(len(logger.handlers), 1)
         handler = logger.handlers[0]
         self.assertIsInstance(handler, logging.StreamHandler)
@@ -237,18 +237,18 @@ class TestGetDefaultLogger(unittest.TestCase):
     def test_get_default_logger_uses_custom_formatter(self):
         """Test that get_default_logger uses CustomFormatter"""
         logger = get_default_logger()
-        
+
         handler = logger.handlers[0]
         self.assertIsInstance(handler.formatter, CustomFormatter)
 
-    @patch('sys.stdout', new_callable=StringIO)
+    @patch("sys.stdout", new_callable=StringIO)
     def test_get_default_logger_output_format(self, mock_stdout):
         """Test that the logger produces correctly formatted output"""
         logger = get_default_logger()
         logger.setLevel(logging.INFO)
-        
+
         logger.info("Test message")
-        
+
         output = mock_stdout.getvalue()
         self.assertIn("INFO", output)
         self.assertIn("Test message", output)
@@ -278,5 +278,5 @@ class TestConstants(unittest.TestCase):
         self.assertIn(".", VERSION)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

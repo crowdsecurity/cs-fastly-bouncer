@@ -89,7 +89,7 @@ async def setup_service(
     service_id = service_cfg.id
     if cleanup_mode:
         comment = "Clone cleaned from CrowdSec resources"
-    
+
     # Use reference_version if provided, otherwise get the active version
     if service_cfg.reference_version:
         version_to_clone = service_cfg.reference_version
@@ -292,11 +292,11 @@ async def run(config: Config, services: List[Service]):
 
         new_states = list(map(lambda service: service.as_jsonable_dict(), services))
         if new_states != previous_states:
-            logger.info("Updating local cache file")
+            logger.debug("Updating local cache file")
             new_cache = {"service_states": new_states, "bouncer_version": VERSION}
             async with await trio.open_file(config.cache_path, "w") as f:
                 await f.write(json.dumps(new_cache, indent=4))
-            logger.debug("done updating cache")
+            logger.info("Local cache updated")
             previous_states = new_states
 
         if exiting:

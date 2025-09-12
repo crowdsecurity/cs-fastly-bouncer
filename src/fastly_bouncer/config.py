@@ -43,7 +43,9 @@ class FastlyServiceConfig:
 
     def __post_init__(self):
         # Exclude reference_version from validation since it can be None
-        fields_to_validate = {key: getattr(self, key) for key in asdict(self).keys() if key != "reference_version"}
+        fields_to_validate = {
+            key: getattr(self, key) for key in asdict(self).keys() if key != "reference_version"
+        }
         are_filled_validator(**fields_to_validate)
 
 
@@ -175,7 +177,9 @@ class ConfigGenerator:
                 continue
 
             if "reference_version:" in line:
-                lines[i] = f"{line}  # Optional: specify a specific version to clone from instead of the active version"
+                lines[i] = (
+                    f"{line}  # Optional: specify a specific version to clone from instead of the active version"
+                )
                 continue
 
         return "\n".join(lines)

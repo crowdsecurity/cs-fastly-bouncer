@@ -1,8 +1,9 @@
-from unittest import TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
 import tempfile
-import yaml
 from pathlib import Path
+from unittest import TestCase
+from unittest.mock import patch
+
+import yaml
 
 from fastly_bouncer.config import (
     Config,
@@ -31,9 +32,7 @@ class TestConfigGeneration(TestCase):
         """Test FastlyServiceConfig validates required fields"""
         # Valid config should not raise
         config = FastlyServiceConfig(
-            id="service123",
-            recaptcha_site_key="site_key",
-            recaptcha_secret_key="secret_key"
+            id="service123", recaptcha_site_key="site_key", recaptcha_secret_key="secret_key"
         )
         self.assertEqual(config.id, "service123")
         self.assertEqual(config.activate, False)  # Default value
@@ -47,27 +46,22 @@ class TestConfigGeneration(TestCase):
     def test_config_validation(self):
         """Test Config validates account configurations"""
         crowdsec_config = CrowdSecConfig(lapi_key="test_key")
-        
+
         # Valid config with account token and services
         service_config = FastlyServiceConfig(
-            id="service1", 
-            recaptcha_site_key="site_key", 
-            recaptcha_secret_key="secret_key"
+            id="service1", recaptcha_site_key="site_key", recaptcha_secret_key="secret_key"
         )
-        account_config = FastlyAccountConfig(
-            account_token="token123", 
-            services=[service_config]
-        )
-        
+        account_config = FastlyAccountConfig(account_token="token123", services=[service_config])
+
         config = Config(
             log_level="info",
-            log_mode="stdout", 
+            log_mode="stdout",
             log_file="/var/log/test.log",
             update_frequency=10,
             crowdsec_config=crowdsec_config,
-            fastly_account_configs=[account_config]
+            fastly_account_configs=[account_config],
         )
-        
+
         # Should not raise
         self.assertEqual(len(config.fastly_account_configs), 1)
 
@@ -77,10 +71,10 @@ class TestConfigGeneration(TestCase):
             Config(
                 log_level="info",
                 log_mode="stdout",
-                log_file="/var/log/test.log", 
+                log_file="/var/log/test.log",
                 update_frequency=10,
                 crowdsec_config=crowdsec_config,
-                fastly_account_configs=[bad_account]
+                fastly_account_configs=[bad_account],
             )
         self.assertIn("no token specified", str(context.exception))
 
@@ -91,74 +85,74 @@ class TestConfigGeneration(TestCase):
                 log_level="info",
                 log_mode="stdout",
                 log_file="/var/log/test.log",
-                update_frequency=10, 
+                update_frequency=10,
                 crowdsec_config=crowdsec_config,
-                fastly_account_configs=[bad_account]
+                fastly_account_configs=[bad_account],
             )
         self.assertIn("no service specified", str(context.exception))
 
     def test_parse_config_file(self):
         """Test parsing a YAML configuration file"""
         config_data = {
-            'log_level': 'debug',
-            'log_mode': 'file',
-            'log_file': '/var/log/bouncer.log',
-            'update_frequency': 30,
-            'cache_path': '/tmp/cache.json',
-            'crowdsec_config': {
-                'lapi_key': 'test_api_key',
-                'lapi_url': 'http://crowdsec:8080/',
-                'include_scenarios_containing': ['http'],
-                'exclude_scenarios_containing': ['ssh'],
-                'insecure_skip_verify': True,
+            "log_level": "debug",
+            "log_mode": "file",
+            "log_file": "/var/log/bouncer.log",
+            "update_frequency": 30,
+            "cache_path": "/tmp/cache.json",
+            "crowdsec_config": {
+                "lapi_key": "test_api_key",
+                "lapi_url": "http://crowdsec:8080/",
+                "include_scenarios_containing": ["http"],
+                "exclude_scenarios_containing": ["ssh"],
+                "insecure_skip_verify": True,
             },
-            'fastly_account_configs': [
+            "fastly_account_configs": [
                 {
-                    'account_token': 'fastly_token_123',
-                    'services': [
+                    "account_token": "fastly_token_123",
+                    "services": [
                         {
-                            'id': 'service_id_1',
-                            'recaptcha_site_key': 'site_key_123',
-                            'recaptcha_secret_key': 'secret_key_456',
-                            'activate': True,
-                            'max_items': 15000,
+                            "id": "service_id_1",
+                            "recaptcha_site_key": "site_key_123",
+                            "recaptcha_secret_key": "secret_key_456",
+                            "activate": True,
+                            "max_items": 15000,
                         }
-                    ]
+                    ],
                 }
-            ]
+            ],
         }
 
         # Create temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
             yaml.dump(config_data, f)
             temp_path = Path(f.name)
 
         try:
             # Parse the config
             config = parse_config_file(temp_path)
-            
+
             # Verify parsed values
-            self.assertEqual(config.log_level, 'debug')
-            self.assertEqual(config.log_mode, 'file')
+            self.assertEqual(config.log_level, "debug")
+            self.assertEqual(config.log_mode, "file")
             self.assertEqual(config.update_frequency, 30)
-            self.assertEqual(config.crowdsec_config.lapi_key, 'test_api_key')
-            self.assertEqual(config.crowdsec_config.lapi_url, 'http://crowdsec:8080/')
+            self.assertEqual(config.crowdsec_config.lapi_key, "test_api_key")
+            self.assertEqual(config.crowdsec_config.lapi_url, "http://crowdsec:8080/")
             self.assertTrue(config.crowdsec_config.insecure_skip_verify)
-            self.assertEqual(config.crowdsec_config.include_scenarios_containing, ['http'])
-            self.assertEqual(config.crowdsec_config.exclude_scenarios_containing, ['ssh'])
-            
+            self.assertEqual(config.crowdsec_config.include_scenarios_containing, ["http"])
+            self.assertEqual(config.crowdsec_config.exclude_scenarios_containing, ["ssh"])
+
             # Verify account config
             self.assertEqual(len(config.fastly_account_configs), 1)
             account = config.fastly_account_configs[0]
-            self.assertEqual(account.account_token, 'fastly_token_123')
+            self.assertEqual(account.account_token, "fastly_token_123")
             self.assertEqual(len(account.services), 1)
-            
+
             # Verify service config
             service = account.services[0]
-            self.assertEqual(service.id, 'service_id_1')
+            self.assertEqual(service.id, "service_id_1")
             self.assertTrue(service.activate)
             self.assertEqual(service.max_items, 15000)
-            
+
         finally:
             # Clean up
             temp_path.unlink()
@@ -169,7 +163,7 @@ class TestConfigGeneration(TestCase):
         with self.assertRaises(FileNotFoundError):
             parse_config_file(non_existent_path)
 
-    @patch('fastly_bouncer.config.ConfigGenerator.generate_config_for_account')
+    @patch("fastly_bouncer.config.ConfigGenerator.generate_config_for_account")
     def test_merge_service_configs(self, mock_generate_account):
         """Test merging existing and new service configurations"""
         # Mock the account generation
@@ -180,22 +174,21 @@ class TestConfigGeneration(TestCase):
                     id="service1",
                     recaptcha_site_key="<RECAPTCHA_SITE_KEY>",
                     recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
-                    activate=False
+                    activate=False,
                 )
-            ]
+            ],
         )
-        
+
         # Existing config with customized service
         existing_service = FastlyServiceConfig(
             id="service1",
-            recaptcha_site_key="real_site_key", 
+            recaptcha_site_key="real_site_key",
             recaptcha_secret_key="real_secret_key",
             activate=True,
-            max_items=25000
+            max_items=25000,
         )
         existing_account = FastlyAccountConfig(
-            account_token="token123",
-            services=[existing_service]
+            account_token="token123", services=[existing_service]
         )
         existing_config = Config(
             log_level="info",
@@ -203,32 +196,29 @@ class TestConfigGeneration(TestCase):
             log_file="/var/log/test.log",
             update_frequency=10,
             crowdsec_config=CrowdSecConfig(lapi_key="test"),
-            fastly_account_configs=[existing_account]
+            fastly_account_configs=[existing_account],
         )
-        
+
         # New config with default values
         new_service = FastlyServiceConfig(
             id="service1",
             recaptcha_site_key="<RECAPTCHA_SITE_KEY>",
-            recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>", 
-            activate=False
+            recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
+            activate=False,
         )
-        new_account = FastlyAccountConfig(
-            account_token="token123",
-            services=[new_service]
-        )
+        new_account = FastlyAccountConfig(account_token="token123", services=[new_service])
         new_config = Config(
             log_level="info",
-            log_mode="stdout", 
+            log_mode="stdout",
             log_file="/var/log/test.log",
             update_frequency=10,
             crowdsec_config=CrowdSecConfig(lapi_key="test"),
-            fastly_account_configs=[new_account]
+            fastly_account_configs=[new_account],
         )
-        
+
         # Merge configurations
         merged = ConfigGenerator.merge_service_configs(existing_config, new_config)
-        
+
         # Verify merged service preserves existing values
         merged_service = merged.fastly_account_configs[0].services[0]
         self.assertEqual(merged_service.recaptcha_site_key, "real_site_key")
@@ -242,19 +232,17 @@ class TestConfigGeneration(TestCase):
             id="test_service",
             recaptcha_site_key="site_key",
             recaptcha_secret_key="secret_key",
-            reference_version="42"
+            reference_version="42",
         )
-        
+
         self.assertEqual(service_config.reference_version, "42")
-        
+
     def test_fastly_service_config_with_none_reference_version(self):
         """Test FastlyServiceConfig with None reference_version (default)"""
         service_config = FastlyServiceConfig(
-            id="test_service", 
-            recaptcha_site_key="site_key",
-            recaptcha_secret_key="secret_key"
+            id="test_service", recaptcha_site_key="site_key", recaptcha_secret_key="secret_key"
         )
-        
+
         self.assertIsNone(service_config.reference_version)
 
     def test_merge_service_configs_with_reference_version(self):
@@ -265,45 +253,41 @@ class TestConfigGeneration(TestCase):
             recaptcha_site_key="existing_site_key",
             recaptcha_secret_key="existing_secret",
             activate=True,
-            reference_version="5"
+            reference_version="5",
         )
         existing_account = FastlyAccountConfig(
-            account_token="existing_token",
-            services=[existing_service]
+            account_token="existing_token", services=[existing_service]
         )
         existing_config = Config(
             log_level="info",
             log_mode="stdout",
-            log_file="/var/log/test.log", 
+            log_file="/var/log/test.log",
             update_frequency=30,
             crowdsec_config=CrowdSecConfig(lapi_key="test_key"),
-            fastly_account_configs=[existing_account]
+            fastly_account_configs=[existing_account],
         )
-        
+
         # Create new config with different reference_version
         new_service = FastlyServiceConfig(
             id="service1",
             recaptcha_site_key="<RECAPTCHA_SITE_KEY>",
             recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
             activate=False,
-            reference_version="10"
+            reference_version="10",
         )
-        new_account = FastlyAccountConfig(
-            account_token="new_token",
-            services=[new_service]
-        )
+        new_account = FastlyAccountConfig(account_token="new_token", services=[new_service])
         new_config = Config(
             log_level="debug",
             log_mode="file",
             log_file="/var/log/new.log",
             update_frequency=60,
             crowdsec_config=CrowdSecConfig(lapi_key="new_key"),
-            fastly_account_configs=[new_account]
+            fastly_account_configs=[new_account],
         )
-        
+
         # Merge configurations
         merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
-        
+
         # Verify existing service config preserved including reference_version
         merged_service = merged_config.fastly_account_configs[0].services[0]
         self.assertEqual(merged_service.recaptcha_site_key, "existing_site_key")
@@ -318,44 +302,40 @@ class TestConfigGeneration(TestCase):
             id="service1",
             recaptcha_site_key="existing_site_key",
             recaptcha_secret_key="existing_secret",
-            reference_version="5"
+            reference_version="5",
         )
         existing_account = FastlyAccountConfig(
-            account_token="existing_token",
-            services=[existing_service]
+            account_token="existing_token", services=[existing_service]
         )
         existing_config = Config(
             log_level="info",
             log_mode="stdout",
-            log_file="/var/log/test.log", 
+            log_file="/var/log/test.log",
             update_frequency=30,
             crowdsec_config=CrowdSecConfig(lapi_key="test_key"),
-            fastly_account_configs=[existing_account]
+            fastly_account_configs=[existing_account],
         )
-        
+
         # Create new config with None reference_version
         new_service = FastlyServiceConfig(
             id="service1",
             recaptcha_site_key="<RECAPTCHA_SITE_KEY>",
             recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
-            reference_version=None
+            reference_version=None,
         )
-        new_account = FastlyAccountConfig(
-            account_token="new_token",
-            services=[new_service]
-        )
+        new_account = FastlyAccountConfig(account_token="new_token", services=[new_service])
         new_config = Config(
             log_level="debug",
             log_mode="file",
             log_file="/var/log/new.log",
             update_frequency=60,
             crowdsec_config=CrowdSecConfig(lapi_key="new_key"),
-            fastly_account_configs=[new_account]
+            fastly_account_configs=[new_account],
         )
-        
+
         # Merge configurations
         merged_config = ConfigGenerator.merge_service_configs(existing_config, new_config)
-        
+
         # reference_version should be preserved from existing config, even when new is None
         merged_service = merged_config.fastly_account_configs[0].services[0]
         self.assertEqual(merged_service.reference_version, "5")
