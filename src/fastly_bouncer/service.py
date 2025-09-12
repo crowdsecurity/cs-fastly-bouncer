@@ -65,7 +65,7 @@ class ACLCollection:
             acls[i] = acl  # Place ACL at correct index position
 
             # Small delay to ensure proper ordering at Fastly API level
-            await trio.sleep(0.5)
+            await trio.sleep(1)
         return acls
 
     def insert_item(self, item: str) -> bool:
