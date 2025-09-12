@@ -237,10 +237,12 @@ def buildClientParams(config: Config):
         "interval": config.update_frequency,
         "user_agent": f"fastly-bouncer/v{VERSION}",
         "scopes": ("ip", "range", "country", "as"),
-        "only_include_decisions_from": tuple(
-            config.crowdsec_config.only_include_decisions_from
-        ),
     }
+    # Origins to include decisions from
+    if config.crowdsec_config.only_include_decisions_from:
+        client_params["only_include_decisions_from"] = tuple(
+            config.crowdsec_config.only_include_decisions_from
+        )
 
     # Include/exclude scenarios
     if config.crowdsec_config.include_scenarios_containing:
