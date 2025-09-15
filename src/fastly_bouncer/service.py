@@ -48,10 +48,12 @@ class ACLCollection:
 
     async def create_acls(self, acl_count: int) -> List[ACL]:
         """
-        Provisions ACLs in sequential order with guaranteed ordering
+        Provisions ACLs in reverse order so ACL 0 appears first in Fastly UI
+        (Fastly sorts by creation date descending, so last created appears first)
         """
         acls = [None] * acl_count  # Pre-allocate list with correct size
-        for i in range(acl_count):
+        # Create ACLs in reverse order (highest index first, 0 last)
+        for i in reversed(range(acl_count)):
             acl_name = f"crowdsec_{self.action}_{i}"
             logger.info(
                 with_suffix(f"creating acl {acl_name} ", service_id=self.service_id)
@@ -65,9 +67,9 @@ class ACLCollection:
             acls[i] = acl  # Place ACL at correct index position
 
             # Small delay to ensure proper ordering at Fastly API level
-            # Do not sleep after the last ACL creation
-            if i < acl_count - 1:
-                await trio.sleep(0.3)
+            # Do not sleep after the last ACL creation (which is ACL 0)
+            if i > 0:
+                await trio.sleep(0.6)
         return acls
 
     def insert_item(self, item: str) -> bool:
