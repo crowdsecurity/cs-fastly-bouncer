@@ -129,6 +129,8 @@ async def setup_service(
             fastly_api, action, service_cfg, version
         )
         acl_collection_by_action[action] = acl_collection
+        # Small delay to ensure proper ordering at Fastly API level
+        await trio.sleep(1)
 
     async with sender_chan:
         s = Service(
@@ -306,6 +308,7 @@ async def run(config: Config, services: List[Service]):
 async def start(config: Config, cleanup_mode):
     global services
     services = await setup_fastly_infra(config, cleanup_mode)
+    logger.info("Fastly infra setup complete")
     if cleanup_mode:
         if Path(config.cache_path).exists():
             logger.info("cleaning cache")
