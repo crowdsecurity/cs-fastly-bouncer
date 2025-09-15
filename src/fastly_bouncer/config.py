@@ -83,7 +83,7 @@ def fastly_config_from_dict(data: Dict) -> List[FastlyAccountConfig]:
             filtered_service_cfg = _filter_and_warn_unknown_fields(
                 service_cfg,
                 FastlyServiceConfig,
-                f"service '{service_cfg.get('id', 'unknown')}'",
+                f"Service '{service_cfg.get('id', 'unknown')}'",
             )
             service_configs.append(FastlyServiceConfig(**filtered_service_cfg))
         account_configs.append(

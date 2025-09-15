@@ -167,11 +167,11 @@ async def setup_account(account_cfg: FastlyAccountConfig, cleanup: bool, sender_
 async def setup_fastly_infra(config: Config, cleanup_mode):
     p = Path(config.cache_path)
     if p.exists():
-        logger.info("cache file exists")
+        logger.info("Cache file exists")
         async with await trio.open_file(config.cache_path) as f:
             s = await f.read()
             if not s:
-                logger.warning(f"cache file at {config.cache_path} is empty")
+                logger.warning(f"Cache file at {config.cache_path} is empty")
             else:
                 cache = json.loads(s)
                 services = list(
@@ -188,9 +188,9 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
         p.parent.mkdir(exist_ok=True, parents=True)
 
     if cleanup_mode:
-        logger.info("cleaning fastly infra")
+        logger.info("Cleaning fastly infra")
     else:
-        logger.info("setting up fastly infra")
+        logger.info("Setting up fastly infra")
 
     services = []
     sender, receiver = trio.open_memory_channel(0)
@@ -202,6 +202,7 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
         async for service_chunk in receiver:
             services.extend(service_chunk)
 
+    logger.info("Fastly infra setup complete")
     return services
 
 
@@ -308,10 +309,9 @@ async def run(config: Config, services: List[Service]):
 async def start(config: Config, cleanup_mode):
     global services
     services = await setup_fastly_infra(config, cleanup_mode)
-    logger.info("Fastly infra setup complete")
     if cleanup_mode:
         if Path(config.cache_path).exists():
-            logger.info("cleaning cache")
+            logger.info("Cleaning cache")
             with open(config.cache_path, "w") as _:
                 pass
         return
@@ -364,7 +364,7 @@ def main():
     # Handle config editing
     if args.e:
         if not args.c.exists():
-            print(f"config at {args.c} doesn't exist", file=sys.stderr)
+            print(f"Config at {args.c} doesn't exist", file=sys.stderr)
             sys.exit(1)
         try:
             existing_config = parse_config_file(args.c)
@@ -379,27 +379,27 @@ def main():
             print(f"Config successfully updated: {args.c}")
             sys.exit(0)
         except Exception as e:
-            print(f"got error {e} while editing config at {args.c}", file=sys.stderr)
+            print(f"Got error {e} while editing config at {args.c}", file=sys.stderr)
             sys.exit(1)
 
     # Handle normal run
     if not args.g:
         if not args.c:
-            print("config file not provided", file=sys.stderr)
+            print("Config file not provided", file=sys.stderr)
             arg_parser.print_help()
             sys.exit(1)
         else:
             if not args.c.exists():
-                print(f"config at {args.c} doesn't exist", file=sys.stderr)
+                print(f"Config at {args.c} doesn't exist", file=sys.stderr)
                 sys.exit(1)
             else:
                 try:
                     config = parse_config_file(args.c)
                     set_logger(config)
-                    logger.info("parsed config successfully")
+                    logger.info("Parsed config successfully")
                     trio.run(start, config, args.d)
                 except Exception as e:
-                    logger.error(f"got error {e} while parsing config at {args.c}")
+                    logger.error(f"Got error {e} while parsing config at {args.c}")
                     sys.exit(1)
 
 

@@ -55,14 +55,14 @@ class ACLCollection:
         # Create ACLs in reverse order (highest index first, 0 last)
         for i in reversed(range(acl_count)):
             acl_name = f"crowdsec_{self.action}_{i}"
-            logger.info(
-                with_suffix(f"creating acl {acl_name} ", service_id=self.service_id)
+            logger.debug(
+                with_suffix(f"Creating acl {acl_name} ", service_id=self.service_id)
             )
             acl = await self.api.create_acl_for_service(
                 service_id=self.service_id, version=self.version, name=acl_name
             )
             logger.info(
-                with_suffix(f"created acl {acl_name}", service_id=self.service_id)
+                with_suffix(f"Acl {acl_name} created", service_id=self.service_id)
             )
             acls[i] = acl  # Place ACL at correct index position
 
@@ -109,7 +109,7 @@ class ACLCollection:
 
         logger.info(
             with_suffix(
-                f"processing {len(new_items)} items to add and {len(expired_items)} items to remove",
+                f"Processing {len(new_items)} items to add and {len(expired_items)} items to remove",
                 service_id=self.service_id,
                 action=self.action,
             )
@@ -118,7 +118,7 @@ class ACLCollection:
         if new_items:
             logger.info(
                 with_suffix(
-                    f"adding {len(new_items)} items to acl collection",
+                    f"Adding {len(new_items)} items to acl collection",
                     service_id=self.service_id,
                     action=self.action,
                 )
@@ -127,7 +127,7 @@ class ACLCollection:
         if expired_items:
             logger.info(
                 with_suffix(
-                    f"removing {len(expired_items)} items from acl collection",
+                    f"Removing {len(expired_items)} items from acl collection",
                     service_id=self.service_id,
                     action=self.action,
                 )
@@ -140,7 +140,7 @@ class ACLCollection:
             if not self.insert_item(new_item):
                 logger.warning(
                     with_suffix(
-                        f"acl_collection for {self.action} has reached configured max_items limit "
+                        f"ACL collection for {self.action} has reached configured max_items limit "
                         f"({self.max_items} items). Ignoring remaining items.",
                         service_id=self.service_id,
                     )
@@ -161,7 +161,7 @@ class ACLCollection:
                     n.start_soon(self.update_acl, acl)
             logger.info(
                 with_suffix(
-                    f"acl collection for {self.action} updated",
+                    f"ACL collection for {self.action} updated",
                     service_id=self.service_id,
                 )
             )
@@ -176,7 +176,7 @@ class ACLCollection:
     async def update_acl(self, acl: ACL):
         logger.debug(
             with_suffix(
-                f"commiting changes to acl {acl.name}",
+                f"Commiting changes to acl {acl.name}",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
@@ -184,7 +184,7 @@ class ACLCollection:
         await self.api.process_acl(acl)
         logger.debug(
             with_suffix(
-                f"commited changes to acl {acl.name}",
+                f"Commited changes to acl {acl.name}",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
@@ -456,7 +456,7 @@ class Service:
                 self.countries_by_action[action] - prev_countries_by_action[action]
             )
             if new_countries:
-                logger.info(f"countries {new_countries} will get {action} ")
+                logger.info(f"Countries {new_countries} will get {action} ")
 
             new_systems = (
                 self.autonomoussystems_by_action[action]
@@ -476,14 +476,14 @@ class Service:
         if self._first_time and self.activate:
             logger.debug(
                 with_suffix(
-                    f"activating new service version {self.version}",
+                    f"Activating new service version {self.version}",
                     service_id=self.service_id,
                 )
             )
             await self.api.activate_service_version(self.service_id, self.version)
             logger.info(
                 with_suffix(
-                    f"activated new service version {self.version}",
+                    f"New service version {self.version} activated",
                     service_id=self.service_id,
                 )
             )
