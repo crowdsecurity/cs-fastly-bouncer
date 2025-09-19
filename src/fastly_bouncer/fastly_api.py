@@ -2,20 +2,21 @@ import datetime
 import ipaddress
 import logging
 from dataclasses import asdict, dataclass, field
-from functools import partial
 from typing import Dict, List, Set
 from urllib.parse import urljoin
 
 import httpx
 import trio
 from dateutil.parser import parse as parse_date
-
 from fastly_bouncer.utils import with_suffix
 
 logger: logging.Logger = logging.getLogger("")
 
-
-ACL_CAPACITY = 100
+ACL_CAPACITY = 1000  # Max number of entries an ACL can hold
+ACL_BATCH_SIZE = (
+    1000  # Max number of entries that can be added/removed in a single API call
+)
+ENTRIES_PER_PAGE = 1000
 
 
 @dataclass
@@ -77,8 +78,18 @@ class VCL:
         }
 
 
-async def raise_on_4xx_5xx(response):
-    response.raise_for_status()
+async def log_and_raise_on_error(response):
+    if response.status_code >= 400:
+        try:
+            error_body = response.text
+            logger.error(
+                f"HTTP {response.status_code} error for {response.request.method} {response.url}: {error_body}"
+            )
+        except Exception:
+            logger.error(
+                f"HTTP {response.status_code} error for {response.request.method} {response.url}"
+            )
+        response.raise_for_status()
 
 
 class FastlyAPI:
@@ -91,13 +102,13 @@ class FastlyAPI:
             headers=httpx.Headers({"Fastly-Key": self._token}),
             timeout=httpx.Timeout(connect=30, read=None, write=15, pool=None),
             transport=httpx.AsyncHTTPTransport(retries=3),
-            event_hooks={"response": [raise_on_4xx_5xx]},
+            event_hooks={"response": [log_and_raise_on_error]},
         )
 
     async def get_version_to_clone(self, service_id: str) -> str:
         """
-        Gets the version to clone from. If service has active version, then the active version will be cloned.
-        Else the the version which was last updated would be cloned
+        Gets the version to clone from. If the service has an active version, then the active version will be cloned.
+        Else the version which was last updated would be cloned
         """
 
         service_versions_resp = await self.session.get(
@@ -158,12 +169,16 @@ class FastlyAPI:
 
     async def delete_vcl(self, vcl: VCL):
         resp = await self.session.delete(
-            self.api_url(f"/service/{vcl.service_id}/version/{vcl.version}/snippet/{vcl.name}")
+            self.api_url(
+                f"/service/{vcl.service_id}/version/{vcl.version}/snippet/{vcl.name}"
+            )
         )
         return resp.json()
 
     async def get_all_acls(self, service_id, version) -> List[ACL]:
-        resp = await self.session.get(self.api_url(f"/service/{service_id}/version/{version}/acl"))
+        resp = await self.session.get(
+            self.api_url(f"/service/{service_id}/version/{version}/acl")
+        )
         acls = resp.json()
         return [
             ACL(id=acl["id"], name=acl["name"], service_id=service_id, version=version)
@@ -172,7 +187,9 @@ class FastlyAPI:
 
     async def delete_acl(self, acl: ACL):
         resp = await self.session.delete(
-            self.api_url(f"/service/{acl.service_id}/version/{acl.version}/acl/{acl.name}")
+            self.api_url(
+                f"/service/{acl.service_id}/version/{acl.version}/acl/{acl.name}"
+            )
         )
         return resp
 
@@ -198,7 +215,7 @@ class FastlyAPI:
         self, service_id: str, version: str, comment=""
     ) -> str:
         """
-        Creates new version for service.
+        Creates a new version for service.
         Returns the new version.
         """
         if not comment:
@@ -212,7 +229,10 @@ class FastlyAPI:
                 f"/service/{service_id}/version/{resp['number']}",
             ),
             json={
-                "comment": f"Created by CrowdSec. {comment} Cloned from version {version}. Created at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                "comment": (
+                    f"Created by CrowdSec. {comment} Cloned from version {version}. "
+                    f"Created at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                )
             },
         )
         tmp.json()
@@ -248,11 +268,6 @@ class FastlyAPI:
             vcl = await self.update_dynamic_vcl(vcl)
         return vcl
 
-    async def is_service_version_locked(self, service_id, version) -> bool:
-        resp = await self.session.get(self.api_url(f"/service/{service_id}/version/{version}"))
-        resp = resp.json()
-        return resp["locked"]
-
     async def create_vcl(self, vcl: VCL):
         if vcl.id:
             return vcl
@@ -272,50 +287,142 @@ class FastlyAPI:
         resp.json()
         return vcl
 
-    async def refresh_acl_entries(self, acl: ACL) -> Dict[str, str]:
-        resp = await self.session.get(
-            self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page=100")
-        )
-        resp = resp.json()
+    async def refresh_acl_entries(self, acl: ACL) -> ACL:
         acl.entries = {}
-        for entry in resp:
-            acl.entries[f"{entry['ip']}/{entry['subnet']}"] = entry["id"]
+        page = 1
+        per_page = ENTRIES_PER_PAGE
+
+        while True:
+            resp = await self.session.get(
+                self.api_url(
+                    f"/service/{acl.service_id}/acl/{acl.id}/entries?per_page={per_page}&page={page}"
+                )
+            )
+            entries_page = resp.json()
+
+            # Process entries from this page
+            for entry in entries_page:
+                acl.entries[f"{entry['ip']}/{entry['subnet']}"] = entry["id"]
+
+            # Check if we've gotten all entries (less than per_page means last page)
+            if len(entries_page) < per_page:
+                break
+
+            page += 1
+
+        logger.debug(
+            with_suffix(f"refreshed {len(acl.entries)} ACL entries", acl_id=acl.id)
+        )
         return acl
 
     async def process_acl(self, acl: ACL):
-        logger.debug(with_suffix(f"entries to delete {acl.entries_to_delete}", acl_id=acl.id))
+        logger.debug(
+            with_suffix(f"entries to delete {acl.entries_to_delete}", acl_id=acl.id)
+        )
         logger.debug(with_suffix(f"entries to add {acl.entries_to_add}", acl_id=acl.id))
         update_entries = []
+        successfully_processed_additions = set()
+        successfully_processed_deletions = set()
+
         for entry_to_add in acl.entries_to_add:
             if entry_to_add in acl.entries:
+                successfully_processed_additions.add(
+                    entry_to_add
+                )  # Already exists, mark as processed
                 continue
             network = ipaddress.ip_network(entry_to_add)
             ip, subnet = str(network.network_address), network.prefixlen
-            update_entries.append({"op": "create", "ip": ip, "subnet": subnet})
+            update_entries.append(
+                {"op": "create", "ip": ip, "subnet": subnet, "item": entry_to_add}
+            )
 
         for entry_to_delete in acl.entries_to_delete:
+            if entry_to_delete not in acl.entries:
+                successfully_processed_deletions.add(
+                    entry_to_delete
+                )  # Doesn't exist, mark as processed
+                continue
             update_entries.append(
                 {
                     "op": "delete",
                     "id": acl.entries[entry_to_delete],
+                    "item": entry_to_delete,
                 }
             )
 
         if not update_entries:
+            # Clear items that didn't need API calls (already existed or didn't exist)
+            acl.entries_to_add -= successfully_processed_additions
+            acl.entries_to_delete -= successfully_processed_deletions
             return
 
-        # Only 100 operations per request can be done on an acl.
-        async with trio.open_nursery() as n:
-            for i in range(0, len(update_entries), 100):
-                update_entries_batch = update_entries[i : i + 100]
-                request_body = {"entries": update_entries_batch}
-                f = partial(self.session.patch, json=request_body)
-                n.start_soon(
-                    f,
+        logger.debug(
+            with_suffix(
+                f"processing {len(update_entries)} operations in batches of {ACL_BATCH_SIZE}",
+                acl_id=acl.id,
+            )
+        )
+
+        # Only ACL_BATCH_SIZE operations per request can be done on an acl.
+        async def process_batch(batch_entries, batch_idx):
+            try:
+                # Remove the tracking field before sending to API
+                api_batch = [
+                    {k: v for k, v in entry.items() if k != "item"}
+                    for entry in batch_entries
+                ]
+                request_body = {"entries": api_batch}
+                await self.session.patch(
                     self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries"),
+                    json=request_body,
                 )
+                logger.debug(
+                    with_suffix(
+                        f"successfully processed batch {batch_idx} with {len(batch_entries)} operations",
+                        acl_id=acl.id,
+                    )
+                )
+            except Exception as e:
+                logger.error(
+                    with_suffix(
+                        f"failed to process batch {batch_idx} with {len(batch_entries)} operations: {e}",
+                        acl_id=acl.id,
+                    )
+                )
+                # Remove items from successfully_processed sets since they failed
+                for entry in batch_entries:
+                    if entry["op"] == "create":
+                        successfully_processed_additions.discard(entry["item"])
+                    elif entry["op"] == "delete":
+                        successfully_processed_deletions.discard(entry["item"])
+
+        # Process batches with error handling
+        for i in range(0, len(update_entries), ACL_BATCH_SIZE):
+            update_entries_batch = update_entries[i : i + ACL_BATCH_SIZE]
+            # Track which items are in this batch
+            for entry in update_entries_batch:
+                if entry["op"] == "create":
+                    successfully_processed_additions.add(entry["item"])
+                elif entry["op"] == "delete":
+                    successfully_processed_deletions.add(entry["item"])
+
+            batch_idx = i // ACL_BATCH_SIZE + 1
+            await process_batch(update_entries_batch, batch_idx)
 
         acl = await self.refresh_acl_entries(acl)
+
+        # Remove all items that were successfully sent to the API
+        acl.entries_to_add -= successfully_processed_additions
+        acl.entries_to_delete -= successfully_processed_deletions
+
+        additions = len(successfully_processed_additions)
+        deletions = len(successfully_processed_deletions)
+        logger.debug(
+            with_suffix(
+                f"cleared {additions} additions and {deletions} deletions from pending",
+                acl_id=acl.id,
+            )
+        )
 
     @staticmethod
     def api_url(endpoint: str) -> str:

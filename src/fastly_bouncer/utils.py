@@ -2,7 +2,8 @@ import logging
 import sys
 from importlib.metadata import version
 
-SUPPORTED_ACTIONS = ["ban", "captcha"]
+SUPPORTED_ACTIONS = ["captcha", "ban"]
+DEFAULT_DECISION_SOURCES = ["crowdsec", "cscli"]
 VERSION = version("crowdsec-fastly-bouncer")
 
 

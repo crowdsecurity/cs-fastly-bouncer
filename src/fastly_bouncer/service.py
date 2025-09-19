@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Set
 
 import trio
-
 from fastly_bouncer import vcl_templates
 from fastly_bouncer.fastly_api import ACL, VCL, FastlyAPI
 from fastly_bouncer.utils import with_suffix
@@ -24,6 +23,7 @@ class ACLCollection:
         service_id: str,
         version: str,
         action: str,
+        max_items: int = 20000,
         acls=[],
         state=set(),
     ):
@@ -32,6 +32,7 @@ class ACLCollection:
         self.service_id = service_id
         self.version = version
         self.action = action
+        self.max_items = max_items
         self.state: Set = state
 
     def as_jsonable_dict(self) -> Dict:
@@ -41,39 +42,45 @@ class ACLCollection:
             "service_id": self.service_id,
             "version": self.version,
             "action": self.action,
+            "max_items": self.max_items,
             "state": list(self.state),
         }
 
-    async def create_acl(self, i, sender_chan):
-        acl_name = f"crowdsec_{self.action}_{i}"
-        logger.info(with_suffix(f"creating acl {acl_name} ", service_id=self.service_id))
-        acl = await self.api.create_acl_for_service(
-            service_id=self.service_id, version=self.version, name=acl_name
-        )
-        logger.info(with_suffix(f"created acl {acl_name}", service_id=self.service_id))
-        async with sender_chan:
-            await sender_chan.send(acl)
-
-    async def create_acls(self, acl_count: int) -> None:
+    async def create_acls(self, acl_count: int) -> List[ACL]:
         """
-        Provisions ACLs
+        Provisions ACLs in reverse order so ACL 0 appears first in Fastly UI
+        (Fastly sorts by creation date descending, so last created appears first)
         """
-        acls = []
-        sender, receiver = trio.open_memory_channel(0)
-        async with trio.open_nursery() as n:
-            async with sender:
-                for i in range(acl_count):
-                    n.start_soon(self.create_acl, i, sender.clone())
+        acls = [None] * acl_count  # Pre-allocate list with correct size
+        # Create ACLs in reverse order (highest index first, 0 last)
+        for i in reversed(range(acl_count)):
+            acl_name = f"crowdsec_{self.action}_{i}"
+            logger.debug(
+                with_suffix(f"Creating acl {acl_name} ", service_id=self.service_id)
+            )
+            acl = await self.api.create_acl_for_service(
+                service_id=self.service_id, version=self.version, name=acl_name
+            )
+            logger.info(
+                with_suffix(f"Acl {acl_name} created", service_id=self.service_id)
+            )
+            acls[i] = acl  # Place ACL at correct index position
 
-            async with receiver:
-                async for acl in receiver:
-                    acls.append(acl)
+            # Small delay to ensure proper ordering at Fastly API level
+            # Do not sleep after the last ACL creation (which is ACL 0)
+            if i > 0:
+                await trio.sleep(0.6)
         return acls
 
     def insert_item(self, item: str) -> bool:
         """
         Returns True if the item was successfully allocated in an ACL
         """
+        # Check if we've reached the configured max_items limit
+        total_items = len(self.state)
+        if total_items >= self.max_items:
+            return False
+
         # Check if item is already present in some ACL
         for acl in self.acls:
             if not acl.is_full():
@@ -99,10 +106,19 @@ class ACLCollection:
     def transform_to_state(self, new_state):
         new_items = new_state - self.state
         expired_items = self.state - new_state
+
+        logger.info(
+            with_suffix(
+                f"Processing {len(new_items)} items to add and {len(expired_items)} items to remove",
+                service_id=self.service_id,
+                action=self.action,
+            )
+        )
+
         if new_items:
             logger.info(
                 with_suffix(
-                    f"adding {len(new_items)} items to acl collection",
+                    f"Adding {len(new_items)} items to acl collection",
                     service_id=self.service_id,
                     action=self.action,
                 )
@@ -111,7 +127,7 @@ class ACLCollection:
         if expired_items:
             logger.info(
                 with_suffix(
-                    f"removing {len(expired_items)} items from acl collection",
+                    f"Removing {len(expired_items)} items from acl collection",
                     service_id=self.service_id,
                     action=self.action,
                 )
@@ -122,9 +138,10 @@ class ACLCollection:
                 continue
 
             if not self.insert_item(new_item):
-                logger.warn(
+                logger.warning(
                     with_suffix(
-                        f"acl_collection for {self.action} is full. Ignoring remaining items.",
+                        f"ACL collection for {self.action} has reached configured max_items limit "
+                        f"({self.max_items} items). Ignoring remaining items.",
                         service_id=self.service_id,
                     )
                 )
@@ -144,7 +161,7 @@ class ACLCollection:
                     n.start_soon(self.update_acl, acl)
             logger.info(
                 with_suffix(
-                    f"acl collection for {self.action} updated",
+                    f"ACL collection for {self.action} updated",
                     service_id=self.service_id,
                 )
             )
@@ -159,7 +176,7 @@ class ACLCollection:
     async def update_acl(self, acl: ACL):
         logger.debug(
             with_suffix(
-                f"commiting changes to acl {acl.name}",
+                f"Commiting changes to acl {acl.name}",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
@@ -167,13 +184,11 @@ class ACLCollection:
         await self.api.process_acl(acl)
         logger.debug(
             with_suffix(
-                f"commited changes to acl {acl.name}",
+                f"Commited changes to acl {acl.name}",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
         )
-        acl.entries_to_add = set()
-        acl.entries_to_delete = set()
 
 
 @dataclass
@@ -198,7 +213,8 @@ class Service:
     def from_jsonable_dict(cls, jsonable_dict: Dict):
         api = FastlyAPI(jsonable_dict["token"])
         vcl_by_action = {
-            action: VCL(**data) for action, data in jsonable_dict["vcl_by_action"].items()
+            action: VCL(**data)
+            for action, data in jsonable_dict["vcl_by_action"].items()
         }
         static_vcls = [VCL(**data) for data in jsonable_dict["static_vcls"]]
         acl_collection_by_action = {
@@ -207,6 +223,9 @@ class Service:
                 service_id=jsonable_dict["service_id"],
                 version=jsonable_dict["version"],
                 action=action,
+                max_items=data.get(
+                    "max_items", 20000
+                ),  # Use cached max_items or default
                 state=set(data["state"]),
                 acls=[
                     ACL(
@@ -245,7 +264,9 @@ class Service:
             supported_actions=jsonable_dict["supported_actions"],
             vcl_by_action=vcl_by_action,
             static_vcls=static_vcls,
-            current_conditional_by_action=jsonable_dict["current_conditional_by_action"],
+            current_conditional_by_action=jsonable_dict[
+                "current_conditional_by_action"
+            ],
             countries_by_action=countries_by_action,
             autonomoussystems_by_action=autonomoussystems_by_action,
             acl_collection_by_action=acl_collection_by_action,
@@ -263,10 +284,12 @@ class Service:
             for action, acl_collection in self.acl_collection_by_action.items()
         }
         countries_by_action = {
-            action: list(countries) for action, countries in self.countries_by_action.items()
+            action: list(countries)
+            for action, countries in self.countries_by_action.items()
         }
         autonomoussystems_by_action = {
-            action: list(systems) for action, systems in self.autonomoussystems_by_action.items()
+            action: list(systems)
+            for action, systems in self.autonomoussystems_by_action.items()
         }
         static_vcls = list(map(lambda vcl: vcl.as_jsonable_dict(), self.static_vcls))
 
@@ -292,7 +315,9 @@ class Service:
             self.supported_actions = ["ban", "captcha"]
 
         self.countries_by_action = {action: set() for action in self.supported_actions}
-        self.autonomoussystems_by_action = {action: set() for action in self.supported_actions}
+        self.autonomoussystems_by_action = {
+            action: set() for action in self.supported_actions
+        }
         jwt_secret = str(uuid.uuid1())
         if not self.vcl_by_action:
             self.vcl_by_action = {
@@ -313,14 +338,16 @@ class Service:
                 ),
             }
             for action in [
-                action for action in self.vcl_by_action if action not in self.supported_actions
+                action
+                for action in self.vcl_by_action
+                if action not in self.supported_actions
             ]:
                 del self.vcl_by_action[action]
 
         if not self.static_vcls and "captcha" in self.supported_actions:
             self.static_vcls = [
                 VCL(
-                    name=f"crowdsec_captcha_renderer",
+                    name="crowdsec_captcha_renderer",
                     service_id=self.service_id,
                     action=vcl_templates.CAPTCHA_RENDER_VCL.format(
                         RECAPTCHA_SITE_KEY=self.recaptcha_site_key
@@ -329,7 +356,7 @@ class Service:
                     type="error",
                 ),
                 VCL(
-                    name=f"crowdsec_captcha_validator",
+                    name="crowdsec_captcha_validator",
                     service_id=self.service_id,
                     action=vcl_templates.CAPTCHA_VALIDATOR_VCL.format(
                         JWT_SECRET=jwt_secret,
@@ -339,9 +366,11 @@ class Service:
                     type="deliver",
                 ),
                 VCL(
-                    name=f"crowdsec_captcha_google_backend",
+                    name="crowdsec_captcha_google_backend",
                     service_id=self.service_id,
-                    action=vcl_templates.GOOGLE_BACKEND.format(SERVICE_ID=self.service_id),
+                    action=vcl_templates.GOOGLE_BACKEND.format(
+                        SERVICE_ID=self.service_id
+                    ),
                     version=self.version,
                     type="init",
                 ),
@@ -363,13 +392,27 @@ class Service:
         "new_state" is mapping of item->action. Eg  {"1.2.3.4": "ban", "CN": "captcha", "1234": "ban"}.
         item is string representation of IP or Country or AS Number.
         """
+        # Log old state count
+        old_state_count = sum(
+            len(acl_collection.state)
+            for acl_collection in self.acl_collection_by_action.values()
+        )
+        logger.info(
+            with_suffix(
+                f"Old state contains {old_state_count} decisions",
+                service_id=self.service_id,
+            )
+        )
+
         new_acl_state_by_action = {action: set() for action in self.supported_actions}
 
         prev_countries_by_action = {
-            action: countries.copy() for action, countries in self.countries_by_action.items()
+            action: countries.copy()
+            for action, countries in self.countries_by_action.items()
         }
         prev_autonomoussystems_by_action = {
-            action: systems.copy() for action, systems in self.autonomoussystems_by_action.items()
+            action: systems.copy()
+            for action, systems in self.autonomoussystems_by_action.items()
         }
 
         self.clear_sets()
@@ -396,22 +439,28 @@ class Service:
             self.acl_collection_by_action[action].transform_to_state(expected_acl_state)
 
         for action in self.supported_actions:
-            expired_countries = prev_countries_by_action[action] - self.countries_by_action[action]
+            expired_countries = (
+                prev_countries_by_action[action] - self.countries_by_action[action]
+            )
             if expired_countries:
                 logger.info(f"{action} removed for countries {expired_countries} ")
 
             expired_systems = (
-                prev_autonomoussystems_by_action[action] - self.autonomoussystems_by_action[action]
+                prev_autonomoussystems_by_action[action]
+                - self.autonomoussystems_by_action[action]
             )
             if expired_systems:
                 logger.info(f"{action} removed for AS {expired_systems} ")
 
-            new_countries = self.countries_by_action[action] - prev_countries_by_action[action]
+            new_countries = (
+                self.countries_by_action[action] - prev_countries_by_action[action]
+            )
             if new_countries:
-                logger.info(f"countries {new_countries} will get {action} ")
+                logger.info(f"Countries {new_countries} will get {action} ")
 
             new_systems = (
-                self.autonomoussystems_by_action[action] - prev_autonomoussystems_by_action[action]
+                self.autonomoussystems_by_action[action]
+                - prev_autonomoussystems_by_action[action]
             )
             if new_systems:
                 logger.info(f"AS {new_systems} will get {action}")
@@ -427,14 +476,14 @@ class Service:
         if self._first_time and self.activate:
             logger.debug(
                 with_suffix(
-                    f"activating new service version {self.version}",
+                    f"Activating new service version {self.version}",
                     service_id=self.service_id,
                 )
             )
             await self.api.activate_service_version(self.service_id, self.version)
             logger.info(
                 with_suffix(
-                    f"activated new service version {self.version}",
+                    f"New service version {self.version} activated",
                     service_id=self.service_id,
                 )
             )
@@ -449,7 +498,9 @@ class Service:
             self.vcl_by_action[action] = vcl
 
     @staticmethod
-    def generate_equalto_conditions_for_items(items: Iterable, equal_to: str, quote=False):
+    def generate_equalto_conditions_for_items(
+        items: Iterable, equal_to: str, quote=False
+    ):
         items = sorted(items)
         if not quote:
             return " || ".join([f"{equal_to} == {item}" for item in items])

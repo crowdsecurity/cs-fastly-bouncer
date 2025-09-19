@@ -1,22 +1,33 @@
 import logging
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import trio
 import yaml
-
 from fastly_bouncer.fastly_api import FastlyAPI
-from fastly_bouncer.utils import are_filled_validator, VERSION
+from fastly_bouncer.utils import DEFAULT_DECISION_SOURCES, VERSION, are_filled_validator
 
 
 @dataclass
 class CrowdSecConfig:
     lapi_key: str
     lapi_url: str = "http://localhost:8080/"
+    include_scenarios_containing: List[str] = field(default_factory=list)
+    exclude_scenarios_containing: List[str] = field(default_factory=list)
+    only_include_decisions_from: List[str] = field(
+        default_factory=lambda: DEFAULT_DECISION_SOURCES.copy()
+    )
+    insecure_skip_verify: bool = False
+    key_path: str = ""
+    cert_path: str = ""
+    ca_cert_path: str = ""
 
     def __post_init__(self):
-        are_filled_validator(**{key: getattr(self, key) for key in asdict(self).keys()})
+        # Only validate required fields (exclude optional fields that can be None)
+        required_fields = {"lapi_key": self.lapi_key, "lapi_url": self.lapi_url}
+        are_filled_validator(**required_fields)
 
 
 @dataclass
@@ -24,14 +35,19 @@ class FastlyServiceConfig:
     id: str
     recaptcha_site_key: str
     recaptcha_secret_key: str
-    reference_version: str
-    clone_reference_version: bool = True
     activate: bool = False
     max_items: int = 20000
     captcha_cookie_expiry_duration: str = "1800"
+    reference_version: Optional[str] = None
 
     def __post_init__(self):
-        are_filled_validator(**{key: getattr(self, key) for key in asdict(self).keys()})
+        # Exclude reference_version from validation since it can be None
+        fields_to_validate = {
+            key: getattr(self, key)
+            for key in asdict(self).keys()
+            if key != "reference_version"
+        }
+        are_filled_validator(**fields_to_validate)
 
 
 @dataclass
@@ -40,12 +56,36 @@ class FastlyAccountConfig:
     services: List[FastlyServiceConfig]
 
 
+def _filter_and_warn_unknown_fields(
+    data_dict: Dict, dataclass_type, context: str
+) -> Dict:
+    """Filter out unknown fields and warn about them"""
+    valid_fields = {f.name for f in dataclass_type.__dataclass_fields__.values()}
+    filtered_data = {}
+
+    for key, value in data_dict.items():
+        if key in valid_fields:
+            filtered_data[key] = value
+        else:
+            print(
+                f"Warning: Unknown configuration parameter '{key}' in {context} will be removed.",
+                file=sys.stderr,
+            )
+
+    return filtered_data
+
+
 def fastly_config_from_dict(data: Dict) -> List[FastlyAccountConfig]:
     account_configs: List[FastlyAccountConfig] = []
     for account_cfg in data:
         service_configs: List[FastlyServiceConfig] = []
         for service_cfg in account_cfg["services"]:
-            service_configs.append(FastlyServiceConfig(**service_cfg))
+            filtered_service_cfg = _filter_and_warn_unknown_fields(
+                service_cfg,
+                FastlyServiceConfig,
+                f"Service '{service_cfg.get('id', 'unknown')}'",
+            )
+            service_configs.append(FastlyServiceConfig(**filtered_service_cfg))
         account_configs.append(
             FastlyAccountConfig(
                 account_token=account_cfg["account_token"], services=service_configs
@@ -61,7 +101,9 @@ class Config:
     log_file: str
     update_frequency: int
     crowdsec_config: CrowdSecConfig
-    cache_path: str = "/var/lib/crowdsec/crowdsec-fastly-bouncer/cache/fastly-cache.json"
+    cache_path: str = (
+        "/var/lib/crowdsec/crowdsec-fastly-bouncer/cache/fastly-cache.json"
+    )
     bouncer_version: str = VERSION
     fastly_account_configs: List[FastlyAccountConfig] = field(default_factory=list)
 
@@ -77,9 +119,9 @@ class Config:
     def __post_init__(self):
         for i, account_config in enumerate(self.fastly_account_configs):
             if not account_config.account_token:
-                raise ValueError(f" {i+1}th has no token specified in config")
+                raise ValueError(f" {i + 1}th has no token specified in config")
             if not account_config.services:
-                raise ValueError(f" {i+1}th has no service specified in config")
+                raise ValueError(f" {i + 1}th has no service specified in config")
 
 
 def parse_config_file(path: Path):
@@ -87,14 +129,48 @@ def parse_config_file(path: Path):
         raise FileNotFoundError(f"Config file at {path} doesn't exist")
     with open(path) as f:
         data = yaml.safe_load(f)
+
+        # Filter and warn about unknown root-level parameters
+        filtered_data = _filter_and_warn_unknown_fields(
+            data, Config, "root configuration"
+        )
+
+        # Filter and warn about unknown crowdsec_config parameters
+        crowdsec_data = filtered_data["crowdsec_config"]
+        filtered_crowdsec_data = _filter_and_warn_unknown_fields(
+            crowdsec_data, CrowdSecConfig, "crowdsec_config"
+        )
+
         return Config(
-            crowdsec_config=CrowdSecConfig(**data["crowdsec_config"]),
-            fastly_account_configs=fastly_config_from_dict(data["fastly_account_configs"]),
-            log_level=data["log_level"],
-            log_mode=data["log_mode"],
-            log_file=data["log_file"],
-            update_frequency=int(data["update_frequency"]),
-            cache_path=data["cache_path"],
+            crowdsec_config=CrowdSecConfig(
+                lapi_key=filtered_crowdsec_data["lapi_key"],
+                lapi_url=filtered_crowdsec_data.get(
+                    "lapi_url", "http://localhost:8080/"
+                ),
+                include_scenarios_containing=filtered_crowdsec_data.get(
+                    "include_scenarios_containing", []
+                ),
+                exclude_scenarios_containing=filtered_crowdsec_data.get(
+                    "exclude_scenarios_containing", []
+                ),
+                only_include_decisions_from=filtered_crowdsec_data.get(
+                    "only_include_decisions_from", DEFAULT_DECISION_SOURCES
+                ),
+                insecure_skip_verify=filtered_crowdsec_data.get(
+                    "insecure_skip_verify", False
+                ),
+                key_path=filtered_crowdsec_data.get("key_path", ""),
+                cert_path=filtered_crowdsec_data.get("cert_path", ""),
+                ca_cert_path=filtered_crowdsec_data.get("ca_cert_path", ""),
+            ),
+            fastly_account_configs=fastly_config_from_dict(
+                filtered_data["fastly_account_configs"]
+            ),
+            log_level=filtered_data["log_level"],
+            log_mode=filtered_data["log_mode"],
+            log_file=filtered_data["log_file"],
+            update_frequency=int(filtered_data["update_frequency"]),
+            cache_path=filtered_data["cache_path"],
         )
 
 
@@ -104,7 +180,7 @@ def default_config():
         log_mode="stdout",
         log_file="/var/log/crowdsec-fastly-bouncer.log",  # FIXME: This needs root permissions
         crowdsec_config=CrowdSecConfig(lapi_key="<LAPI_KEY>"),
-        update_frequency="10",
+        update_frequency=10,
     )
 
 
@@ -114,7 +190,7 @@ class ConfigGenerator:
     @staticmethod
     async def generate_config(
         comma_separated_fastly_tokens: str, base_config: Config = default_config()
-    ) -> Config:
+    ) -> str:
         fastly_tokens = comma_separated_fastly_tokens.split(",")
         fastly_tokens = list(map(lambda token: token.strip(), fastly_tokens))
         for token in fastly_tokens:
@@ -139,29 +215,27 @@ class ConfigGenerator:
                     break
 
             if "activate:" in line:
-                lines[i] = f"{line}  # Set to true, to activate the new config in production"
-                continue
-
-            if "clone_reference_version:" in line:
-                lines[
-                    i
-                ] = f"{line}  # Set to false, to modify 'reference_version' instead of cloning it "
-                continue
-
-            if "reference_version:" in line:
-                lines[i] = f"{line}  # Service version to clone/modify"
+                lines[i] = (
+                    f"{line}  # Set to true, to activate the new config in production"
+                )
                 continue
 
             if "captcha_cookie_expiry_duration" in line:
-                lines[
-                    i
-                ] = f"{line}  # Duration(in second) to persist the cookie containing proof of solving captcha"
+                lines[i] = (
+                    f"{line}  # Duration(in second) to persist the cookie containing proof of solving captcha"
+                )
+                continue
+
+            if "reference_version:" in line:
+                lines[i] = (
+                    f"{line}  # Optional: specify a specific version to clone from instead of the active version"
+                )
                 continue
 
         return "\n".join(lines)
 
-    async def generate_config_for_service(api: FastlyAPI, service_id: str, sender_chan):
-        ref_version = await api.get_version_to_clone(service_id)
+    @staticmethod
+    async def generate_config_for_service(service_id: str, sender_chan):
         async with sender_chan:
             await sender_chan.send(
                 FastlyServiceConfig(
@@ -169,11 +243,10 @@ class ConfigGenerator:
                     recaptcha_site_key="<RECAPTCHA_SITE_KEY>",
                     recaptcha_secret_key="<RECAPTCHA_SECRET_KEY>",
                     activate=False,
-                    clone_reference_version=True,
-                    reference_version=ref_version,
                 )
             )
 
+    @staticmethod
     async def generate_config_for_account(fastly_token: str) -> FastlyAccountConfig:
         api = FastlyAPI(fastly_token)
         service_ids_with_name = await api.get_all_service_ids(with_name=True)
@@ -187,7 +260,9 @@ class ConfigGenerator:
             async with sender:
                 for service_id in service_ids:
                     n.start_soon(
-                        ConfigGenerator.generate_config_for_service, api, service_id, sender.clone()
+                        ConfigGenerator.generate_config_for_service,
+                        service_id,
+                        sender.clone(),
                     )
 
             async with receiver:
@@ -196,10 +271,67 @@ class ConfigGenerator:
 
         return FastlyAccountConfig(account_token=fastly_token, services=service_configs)
 
+    @staticmethod
+    async def edit_config(
+        comma_separated_fastly_tokens: str, existing_config: Config
+    ) -> str:
+        fastly_tokens = comma_separated_fastly_tokens.split(",")
+        fastly_tokens = list(map(lambda token: token.strip(), fastly_tokens))
+
+        # Generate new config with fresh data from tokens
+        new_config = Config(
+            log_level=existing_config.log_level,
+            log_mode=existing_config.log_mode,
+            log_file=existing_config.log_file,
+            update_frequency=existing_config.update_frequency,
+            crowdsec_config=existing_config.crowdsec_config,
+            cache_path=existing_config.cache_path,
+            bouncer_version=existing_config.bouncer_version,
+        )
+
+        # Generate fresh account configs with new tokens
+        for token in fastly_tokens:
+            account_cfg = await ConfigGenerator.generate_config_for_account(token)
+            new_config.fastly_account_configs.append(account_cfg)
+
+        # Merge service configurations from existing config
+        merged_config = ConfigGenerator.merge_service_configs(
+            existing_config, new_config
+        )
+
+        return ConfigGenerator.add_comments(yaml.safe_dump(asdict(merged_config)))
+
+    @staticmethod
+    def merge_service_configs(existing_config: Config, new_config: Config) -> Config:
+        # Create a mapping of service_id -> existing service config
+        existing_services = {}
+        for account in existing_config.fastly_account_configs:
+            for service in account.services:
+                existing_services[service.id] = service
+
+        # Merge configurations for each new account
+        for new_account in new_config.fastly_account_configs:
+            for i, new_service in enumerate(new_account.services):
+                if new_service.id in existing_services:
+                    existing_service = existing_services[new_service.id]
+                    # Preserve existing service configuration including reference_version
+                    new_account.services[i] = FastlyServiceConfig(
+                        id=new_service.id,
+                        recaptcha_site_key=existing_service.recaptcha_site_key,
+                        recaptcha_secret_key=existing_service.recaptcha_secret_key,
+                        activate=existing_service.activate,
+                        max_items=existing_service.max_items,
+                        captcha_cookie_expiry_duration=existing_service.captcha_cookie_expiry_duration,
+                        reference_version=existing_service.reference_version,
+                    )
+
+        return new_config
+
 
 def print_config(cfg, o_arg):
     if not o_arg:
         print(cfg)
     else:
+        print(f"Writing config to {o_arg}", file=sys.stdout)
         with open(o_arg, "w") as f:
             f.write(cfg)
