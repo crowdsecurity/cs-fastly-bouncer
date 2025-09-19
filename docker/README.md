@@ -68,6 +68,7 @@ fastly_account_configs:
         captcha_cookie_expiry_duration: '1800'  # Duration to persist the cookie containing proof of solving captcha
         reference_version: null # Optional: specify a specific version to clone from instead of the active version
 
+acl_fast_creation: true # true: faster parallel ACL creations, but with random/unpredictable order. false (default): slower sequential ACL creations, but with natural order
 update_frequency: 10 # Duration in seconds to poll the crowdsec API
 log_level: info # Valid choices are either of "debug","info","warning","error"
 log_mode: stdout # Valid choices are "file" or "stdout" or "stderr"

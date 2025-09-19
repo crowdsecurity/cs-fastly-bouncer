@@ -106,6 +106,7 @@ class Config:
     )
     bouncer_version: str = VERSION
     fastly_account_configs: List[FastlyAccountConfig] = field(default_factory=list)
+    acl_fast_creation: bool = False
 
     def get_log_level(self) -> int:
         log_level_by_str = {
@@ -171,6 +172,7 @@ def parse_config_file(path: Path):
             log_file=filtered_data["log_file"],
             update_frequency=int(filtered_data["update_frequency"]),
             cache_path=filtered_data["cache_path"],
+            acl_fast_creation=filtered_data.get("acl_fast_creation", False),
         )
 
 
@@ -232,6 +234,12 @@ class ConfigGenerator:
                 )
                 continue
 
+            if "acl_fast_creation:" in line:
+                lines[i] = (
+                    f"{line}  # Set to true to create ACLs in parallel (faster but random order)"
+                )
+                continue
+
         return "\n".join(lines)
 
     @staticmethod
@@ -287,6 +295,7 @@ class ConfigGenerator:
             crowdsec_config=existing_config.crowdsec_config,
             cache_path=existing_config.cache_path,
             bouncer_version=existing_config.bouncer_version,
+            acl_fast_creation=existing_config.acl_fast_creation,
         )
 
         # Generate fresh account configs with new tokens

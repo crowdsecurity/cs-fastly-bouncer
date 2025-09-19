@@ -286,3 +286,36 @@ class TestService(TestCase):
         for action in service.supported_actions:
             self.assertEqual(len(service.countries_by_action[action]), 0)
             self.assertEqual(len(service.autonomoussystems_by_action[action]), 0)
+
+    def test_acl_collection_fast_creation_default(self):
+        """Test ACLCollection fast_creation defaults to False"""
+        collection = ACLCollection(self.mock_api, "service_id", "3", "ban")
+        self.assertFalse(collection.fast_creation)
+
+    def test_acl_collection_fast_creation_true(self):
+        """Test ACLCollection fast_creation can be set to True"""
+        collection = ACLCollection(
+            self.mock_api, "service_id", "3", "ban", fast_creation=True
+        )
+        self.assertTrue(collection.fast_creation)
+
+    def test_acl_collection_fast_creation_false(self):
+        """Test ACLCollection fast_creation can be explicitly set to False"""
+        collection = ACLCollection(
+            self.mock_api, "service_id", "3", "ban", fast_creation=False
+        )
+        self.assertFalse(collection.fast_creation)
+
+    def test_acl_collection_serialization_with_fast_creation(self):
+        """Test ACLCollection serialization includes fast_creation"""
+        collection = ACLCollection(
+            self.mock_api, "service_id", "3", "ban", fast_creation=True
+        )
+        data = collection.as_jsonable_dict()
+        self.assertTrue(data["fast_creation"])
+
+        collection_false = ACLCollection(
+            self.mock_api, "service_id", "3", "ban", fast_creation=False
+        )
+        data_false = collection_false.as_jsonable_dict()
+        self.assertFalse(data_false["fast_creation"])
