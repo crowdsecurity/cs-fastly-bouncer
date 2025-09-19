@@ -48,6 +48,7 @@ async def setup_action_for_service(
     action: str,
     service_cfg: FastlyServiceConfig,
     service_version,
+    fast_creation: bool = False,
 ) -> ACLCollection:
 
     acl_count = ceil(service_cfg.max_items / ACL_CAPACITY)
@@ -58,6 +59,7 @@ async def setup_action_for_service(
         action=action,
         max_items=service_cfg.max_items,
         state=set(),
+        fast_creation=fast_creation,
     )
     logger.info(
         with_suffix(
@@ -81,6 +83,7 @@ async def setup_service(
     fastly_api: FastlyAPI,
     cleanup_mode: bool,
     sender_chan: trio.MemorySendChannel,
+    fast_creation: bool = False,
 ):
     comment = None
     service_id = service_cfg.id
@@ -126,7 +129,7 @@ async def setup_service(
     acl_collection_by_action = {}
     for action in SUPPORTED_ACTIONS:
         acl_collection = await setup_action_for_service(
-            fastly_api, action, service_cfg, version
+            fastly_api, action, service_cfg, version, fast_creation
         )
         acl_collection_by_action[action] = acl_collection
         # Small delay to ensure proper ordering at Fastly API level
@@ -147,14 +150,26 @@ async def setup_service(
         await sender_chan.send(s)
 
 
-async def setup_account(account_cfg: FastlyAccountConfig, cleanup: bool, sender_chan):
+async def setup_account(
+    account_cfg: FastlyAccountConfig,
+    cleanup: bool,
+    sender_chan,
+    fast_creation: bool = False,
+):
     fastly_api = FastlyAPI(account_cfg.account_token)
     new_services = []
     sender, receiver = trio.open_memory_channel(0)
     async with trio.open_nursery() as n:
         async with sender:
             for cfg in account_cfg.services:
-                n.start_soon(setup_service, cfg, fastly_api, cleanup, sender.clone())
+                n.start_soon(
+                    setup_service,
+                    cfg,
+                    fastly_api,
+                    cleanup,
+                    sender.clone(),
+                    fast_creation,
+                )
 
         async with receiver:
             async for service in receiver:
@@ -197,7 +212,13 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
     async with trio.open_nursery() as n:
         async with sender:
             for cfg in config.fastly_account_configs:
-                n.start_soon(setup_account, cfg, cleanup_mode, sender.clone())
+                n.start_soon(
+                    setup_account,
+                    cfg,
+                    cleanup_mode,
+                    sender.clone(),
+                    config.acl_fast_creation,
+                )
 
         async for service_chunk in receiver:
             services.extend(service_chunk)

@@ -26,6 +26,7 @@ class ACLCollection:
         max_items: int = 20000,
         acls=[],
         state=set(),
+        fast_creation: bool = False,
     ):
         self.acls: List[ACL] = acls
         self.api: FastlyAPI = api
@@ -34,6 +35,7 @@ class ACLCollection:
         self.action = action
         self.max_items = max_items
         self.state: Set = state
+        self.fast_creation = fast_creation
 
     def as_jsonable_dict(self) -> Dict:
         return {
@@ -44,11 +46,48 @@ class ACLCollection:
             "action": self.action,
             "max_items": self.max_items,
             "state": list(self.state),
+            "fast_creation": self.fast_creation,
         }
 
     async def create_acls(self, acl_count: int) -> List[ACL]:
         """
-        Provisions ACLs in reverse order so ACL 0 appears first in Fastly UI
+        Provisions ACLs. Uses either fast parallel creation or sequential creation
+        based on the fast_creation setting.
+        """
+        if self.fast_creation:
+            return await self._create_acls_fast(acl_count)
+        else:
+            return await self._create_acls_sequential(acl_count)
+
+    async def _create_acls_fast(self, acl_count: int) -> List[ACL]:
+        """
+        Fast ACL creation using trio.start_soon for parallel execution.
+        ACL order will be random but creation is faster.
+        """
+        acls = [None] * acl_count
+
+        async def create_single_acl(index: int):
+            acl_name = f"crowdsec_{self.action}_{index}"
+            logger.debug(
+                with_suffix(f"Creating acl {acl_name} ", service_id=self.service_id)
+            )
+            acl = await self.api.create_acl_for_service(
+                service_id=self.service_id, version=self.version, name=acl_name
+            )
+            logger.info(
+                with_suffix(f"Acl {acl_name} created", service_id=self.service_id)
+            )
+            acls[index] = acl
+
+        async with trio.open_nursery() as nursery:
+            for i in range(acl_count):
+                nursery.start_soon(create_single_acl, i)
+
+        return acls
+
+    async def _create_acls_sequential(self, acl_count: int) -> List[ACL]:
+        """
+        Sequential ACL creation in reverse order so ACL 0 appears first in Fastly UI
         (Fastly sorts by creation date descending, so last created appears first)
         """
         acls = [None] * acl_count  # Pre-allocate list with correct size
@@ -241,6 +280,7 @@ class Service:
                     )
                     for acl_data in data["acls"]
                 ],
+                fast_creation=data.get("fast_creation", False),
             )
             for action, data in jsonable_dict["acl_collection_by_action"].items()
         }

@@ -543,3 +543,83 @@ class TestConfigGeneration(TestCase):
         finally:
             # Restore stderr
             sys.stderr = original_stderr
+
+    def test_acl_fast_creation_default_false(self):
+        """Test that acl_fast_creation defaults to False when not specified"""
+        config_data = {
+            "log_level": "info",
+            "log_mode": "stdout",
+            "log_file": "/tmp/test.log",
+            "update_frequency": 10,
+            "cache_path": "/tmp/cache.json",
+            "crowdsec_config": {
+                "lapi_key": "test_key",
+                "lapi_url": "http://localhost:8080/",
+            },
+            "fastly_account_configs": [],
+        }
+
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = Path(f.name)
+
+        try:
+            config = parse_config_file(temp_path)
+            self.assertFalse(config.acl_fast_creation)
+        finally:
+            temp_path.unlink()
+
+    def test_acl_fast_creation_true(self):
+        """Test that acl_fast_creation is set to True when specified"""
+        config_data = {
+            "log_level": "info",
+            "log_mode": "stdout",
+            "log_file": "/tmp/test.log",
+            "update_frequency": 10,
+            "cache_path": "/tmp/cache.json",
+            "acl_fast_creation": True,
+            "crowdsec_config": {
+                "lapi_key": "test_key",
+                "lapi_url": "http://localhost:8080/",
+            },
+            "fastly_account_configs": [],
+        }
+
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = Path(f.name)
+
+        try:
+            config = parse_config_file(temp_path)
+            self.assertTrue(config.acl_fast_creation)
+        finally:
+            temp_path.unlink()
+
+    def test_acl_fast_creation_false(self):
+        """Test that acl_fast_creation is set to False when explicitly specified"""
+        config_data = {
+            "log_level": "info",
+            "log_mode": "stdout",
+            "log_file": "/tmp/test.log",
+            "update_frequency": 10,
+            "cache_path": "/tmp/cache.json",
+            "acl_fast_creation": False,
+            "crowdsec_config": {
+                "lapi_key": "test_key",
+                "lapi_url": "http://localhost:8080/",
+            },
+            "fastly_account_configs": [],
+        }
+
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = Path(f.name)
+
+        try:
+            config = parse_config_file(temp_path)
+            self.assertFalse(config.acl_fast_creation)
+        finally:
+            temp_path.unlink()
