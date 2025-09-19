@@ -1,0 +1,30 @@
+bouncer_version: 0.1.0
+cache_path: ./dev/cache/fastly-cache.json
+crowdsec_config:
+  ca_cert_path: ''
+  cert_path: ''
+  exclude_scenarios_containing: []
+  include_scenarios_containing:
+  - ssh
+  insecure_skip_verify: false
+  key_path: ''
+  lapi_key: '1234'
+  lapi_url: http://localhost:8080/
+  only_include_decisions_from:
+  - crowdsec
+  - cscli
+  - CAPI
+fastly_account_configs:
+- account_token: ******************************
+  services:
+  - activate: true  # Set to true, to activate the new config in production
+    captcha_cookie_expiry_duration: '1800'  # Duration(in second) to persist the cookie containing proof of solving captcha
+    id: ****************  #
+    max_items: 5000
+    recaptcha_secret_key: ******************************
+    recaptcha_site_key: ******************************
+    reference_version: 63  # Optional: specify a specific version to clone from instead of the active version
+log_file: ./dev/log/crowdsec-fastly-bouncer.log
+log_level: info
+log_mode: stdout
+update_frequency: 30
