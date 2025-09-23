@@ -92,22 +92,26 @@ async def setup_service(
 
     # Use reference_version if provided, otherwise get the active version
     if service_cfg.reference_version:
+        logger.info(
+            with_suffix(
+                f"Using reference_version value: {service_cfg.reference_version}"
+            )
+        )
         version_to_clone = service_cfg.reference_version
     else:
-        version_to_clone = await fastly_api.get_version_to_clone(service_id)
+        version_to_clone = await fastly_api.get_candidate_version(service_id)
     version = await fastly_api.clone_version_for_service_from_given_version(
         service_cfg.id, version_to_clone, comment
     )
     logger.info(
         with_suffix(
-            f"new version {version} for service created",
-            service_id=service_id,
+            f"New version {version} cloned from version {version_to_clone} (service_id=${service_id})"
         )
     )
 
     logger.info(
         with_suffix(
-            "cleaning existing crowdsec resources (if any)",
+            "Cleaning existing crowdsec resources (if any)",
             service_id=service_cfg.id,
             version=version,
         )
@@ -118,9 +122,9 @@ async def setup_service(
         sender_chan.close()
         return
 
-    logger.info(
+    logger.debug(
         with_suffix(
-            "cleaned existing crowdsec resources (if any)",
+            "Cleaned existing crowdsec resources (if any)",
             service_id=service_cfg.id,
             version=version,
         )
@@ -132,8 +136,9 @@ async def setup_service(
             fastly_api, action, service_cfg, version, fast_creation
         )
         acl_collection_by_action[action] = acl_collection
-        # Small delay to ensure proper ordering at Fastly API level
-        await trio.sleep(1)
+        if not fast_creation:
+            # Small delay to ensure proper ordering at Fastly API level
+            await trio.sleep(1)
 
     async with sender_chan:
         s = Service(
@@ -188,17 +193,38 @@ async def setup_fastly_infra(config: Config, cleanup_mode):
             if not s:
                 logger.warning(f"Cache file at {config.cache_path} is empty")
             else:
-                cache = json.loads(s)
-                services = list(
-                    map(Service.from_jsonable_dict, cache["service_states"])
-                )
-                logger.info("Loaded existing infra using cache: ")
-                for service in services:
-                    logger.info(
-                        f"service_id: {service.service_id}, version: {service.version}"
-                    )
                 if not cleanup_mode:
-                    return services
+                    try:
+                        cache_content = json.loads(s)
+                        if "service_states" in cache_content:
+                            logger.info("Loading services from cache")
+                            services = []
+                            for service_state in cache_content["service_states"]:
+                                try:
+                                    service = Service.from_jsonable_dict(service_state)
+                                    services.append(service)
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to load service from cache: {e}"
+                                    )
+                                    logger.info(
+                                        "Cache appears corrupted, will create new infrastructure"
+                                    )
+                                    break
+                            else:
+                                if services:
+                                    logger.info(
+                                        "Successfully loaded services from cache"
+                                    )
+                                    return services
+                        logger.info(
+                            "Cache format invalid or no services found, will create new infrastructure"
+                        )
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse cache file: {e}")
+                        logger.info(
+                            "Cache file corrupted, will create new infrastructure"
+                        )
     else:
         p.parent.mkdir(exist_ok=True, parents=True)
 
@@ -237,14 +263,14 @@ def set_logger(config: Config):
     elif config.log_mode == "file":
         handler = RotatingFileHandler(config.log_file, mode="a+")
     else:
-        raise ValueError(f"unknown log mode {config.log_mode}")
+        raise ValueError(f"Unknown log mode {config.log_mode}")
     formatter = CustomFormatter()
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.info(f"Starting fastly-bouncer-v{VERSION}")
 
 
-def buildClientParams(config: Config):
+def build_client_params(config: Config):
     # Build StreamClient parameters
     client_params = {
         "api_key": config.crowdsec_config.lapi_key,
@@ -286,9 +312,145 @@ def buildClientParams(config: Config):
     return client_params
 
 
+async def discover_existing_fastly_infra(config: Config) -> List[Service]:
+    """Discover existing CrowdSec infrastructure in Fastly services."""
+    discovered_services = []
+
+    for account_cfg in config.fastly_account_configs:
+        fastly_api = FastlyAPI(account_cfg.account_token)
+
+        for service_cfg in account_cfg.services:
+            try:
+                # Get the active version (if any) or the latest updated version
+                candidate_version = await fastly_api.get_candidate_version(
+                    service_cfg.id
+                )
+
+                # Get existing CrowdSec ACLs from this version
+                existing_acls = await fastly_api.get_all_acls(
+                    service_cfg.id, candidate_version
+                )
+                crowdsec_acls = [
+                    acl for acl in existing_acls if acl.name.startswith("crowdsec_")
+                ]
+
+                if not crowdsec_acls:
+                    logger.info(
+                        with_suffix(
+                            "No existing CrowdSec ACLs found, skipping",
+                            service_id=service_cfg.id,
+                            version=candidate_version,
+                        )
+                    )
+                    continue
+
+                logger.info(
+                    with_suffix(
+                        f"Found {len(crowdsec_acls)} existing CrowdSec ACLs",
+                        service_id=service_cfg.id,
+                        version=candidate_version,
+                    )
+                )
+
+                # Group ACLs by action
+                acl_collection_by_action = {}
+                for action in SUPPORTED_ACTIONS:
+                    action_acls = [
+                        acl
+                        for acl in crowdsec_acls
+                        if f"crowdsec_{action}_" in acl.name
+                    ]
+                    if action_acls:
+                        # Create ACL collection for this action
+                        acl_collection = ACLCollection(
+                            api=fastly_api,
+                            service_id=service_cfg.id,
+                            version=candidate_version,
+                            action=action,
+                            max_items=service_cfg.max_items,
+                            state=set(),  # Will be populated by reload_acls
+                            acls=action_acls,
+                            fast_creation=config.acl_fast_creation,
+                        )
+                        acl_collection_by_action[action] = acl_collection
+
+                        logger.info(
+                            with_suffix(
+                                f"Discovered {len(action_acls)} ACLs for {action} action",
+                                service_id=service_cfg.id,
+                            )
+                        )
+
+                if acl_collection_by_action:
+                    # Get existing VCLs
+                    existing_vcls = await fastly_api.get_all_vcls(
+                        service_cfg.id, candidate_version
+                    )
+                    crowdsec_vcls = [
+                        vcl for vcl in existing_vcls if vcl.name.startswith("crowdsec_")
+                    ]
+
+                    # Create service object
+                    service = Service(
+                        api=fastly_api,
+                        version=candidate_version,
+                        service_id=service_cfg.id,
+                        recaptcha_site_key=service_cfg.recaptcha_site_key,
+                        recaptcha_secret=service_cfg.recaptcha_secret_key,
+                        activate=service_cfg.activate,
+                        captcha_expiry_duration=service_cfg.captcha_cookie_expiry_duration,
+                        acl_collection_by_action=acl_collection_by_action,
+                        _first_time=False,  # Not first time since infra already exists
+                    )
+
+                    # Set existing VCLs
+                    service.vcl_by_action = {}
+                    service.static_vcls = []
+                    for vcl in crowdsec_vcls:
+                        if vcl.name.endswith("_rule"):
+                            if "ban" in vcl.name:
+                                service.vcl_by_action["ban"] = vcl
+                            elif "captcha" in vcl.name:
+                                service.vcl_by_action["captcha"] = vcl
+                        else:
+                            service.static_vcls.append(vcl)
+
+                    discovered_services.append(service)
+
+                    logger.info(
+                        with_suffix(
+                            "Successfully discovered existing CrowdSec infrastructure",
+                            service_id=service_cfg.id,
+                            version=candidate_version,
+                        )
+                    )
+
+            except Exception as e:
+                logger.error(
+                    with_suffix(
+                        f"Failed to discover infra for service {service_cfg.id}: {e}",
+                        service_id=service_cfg.id,
+                    )
+                )
+                continue
+
+    return discovered_services
+
+
+async def refresh_acls_on_startup(services: List[Service]):
+    """Refresh all ACL entries from Fastly on startup to ensure state synchronization."""
+    logger.info("Refreshing local cache from Fastly on startup")
+
+    async with trio.open_nursery() as n:
+        for service in services:
+            n.start_soon(service.reload_acls)
+
+    logger.debug("Startup local cache refresh completed")
+
+
 async def run(config: Config, services: List[Service]):
     # Build StreamClient parameters
-    client_params = buildClientParams(config)
+    client_params = build_client_params(config)
 
     crowdsec_client = StreamClient(**client_params)
     crowdsec_client.run()
@@ -297,7 +459,10 @@ async def run(config: Config, services: List[Service]):
     )  # Wait for initial polling by bouncer, so we start with a hydrated state
     if not crowdsec_client.is_running():
         return
-    previous_states = {}
+
+    # Initialize previous_states to current state to avoid unnecessary cache updates
+    previous_states = list(map(lambda service: service.as_jsonable_dict(), services))
+
     while True and not exiting:
         logger.debug(
             f"Retrieving decisions from LAPI with scopes {client_params['scopes']} "
@@ -327,8 +492,32 @@ async def run(config: Config, services: List[Service]):
         await trio.sleep(config.update_frequency)
 
 
-async def start(config: Config, cleanup_mode):
-    global services
+async def start(config: Config, cleanup_mode, refresh_mode=False):
+
+    if refresh_mode:
+        logger.info(
+            "Refresh mode enabled - discovering infrastructure from Fastly and refreshing local cache"
+        )
+        services = await discover_existing_fastly_infra(config)
+        if not services:
+            logger.error(
+                "No existing CrowdSec infrastructure found in Fastly to refresh"
+            )
+            return
+        await refresh_acls_on_startup(services)
+
+        # Create initial cache after refresh to ensure cache file exists
+        refreshed_states = list(
+            map(lambda service: service.as_jsonable_dict(), services)
+        )
+        new_cache = {"service_states": refreshed_states, "bouncer_version": VERSION}
+        async with await trio.open_file(config.cache_path, "w") as f:
+            await f.write(json.dumps(new_cache, indent=4))
+        logger.info("Local cache refreshed")
+
+        await run(config, services)
+        return
+
     services = await setup_fastly_infra(config, cleanup_mode)
     if cleanup_mode:
         if Path(config.cache_path).exists():
@@ -357,8 +546,35 @@ def main():
     arg_parser.add_argument(
         "-o", type=str, help="Path to file to output the generated config."
     )
+    arg_parser.add_argument(
+        "-r",
+        help="Refresh local cache from Fastly active versions (requires -c).",
+        action="store_true",
+    )
     arg_parser.add_help = True
     args = arg_parser.parse_args()
+
+    # Validate refresh mode requirements
+    if args.r:
+        if not args.c:
+            print("Refresh mode (-r) requires config file (-c)", file=sys.stderr)
+            arg_parser.print_help()
+            sys.exit(1)
+        if args.d:
+            print(
+                "Refresh mode (-r) cannot be used with cleanup mode (-d)",
+                file=sys.stderr,
+            )
+            arg_parser.print_help()
+            sys.exit(1)
+        if args.g or args.e or args.o:
+            print(
+                "Refresh mode (-r) can only be used with config file (-c)",
+                file=sys.stderr,
+            )
+            arg_parser.print_help()
+            sys.exit(1)
+
     # Validate edit mode requirements
     if args.e:
         if not args.g:
@@ -418,7 +634,7 @@ def main():
                     config = parse_config_file(args.c)
                     set_logger(config)
                     logger.info("Parsed config successfully")
-                    trio.run(start, config, args.d)
+                    trio.run(start, config, args.d, args.r)
                 except Exception as e:
                     logger.error(f"Got error {e} while parsing config at {args.c}")
                     sys.exit(1)

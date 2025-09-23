@@ -105,26 +105,35 @@ class FastlyAPI:
             event_hooks={"response": [log_and_raise_on_error]},
         )
 
-    async def get_version_to_clone(self, service_id: str) -> str:
+    async def get_candidate_version(self, service_id: str) -> str:
         """
-        Gets the version to clone from. If the service has an active version, then the active version will be cloned.
-        Else the version which was last updated would be cloned
+        Get active the version of the service if any.
+        Else returns the version which was last updated.
         """
-
         service_versions_resp = await self.session.get(
             self.api_url(f"/service/{service_id}/version")
         )
         service_versions = service_versions_resp.json()
 
+        # First, look for an active version
+        for service_version in service_versions:
+            if service_version.get("active", False):
+                logger.info(
+                    with_suffix(f"Found active version: {service_version['number']}")
+                )
+                return str(service_version["number"])
+
+        # If no active version found, fall back to the most recently updated version
         version_to_clone = None
         last_updated = None
         for service_version in service_versions:
             if not last_updated:
                 version_to_clone = service_version["number"]
+                last_updated = parse_date(service_version["updated_at"])
             elif last_updated < parse_date(service_version["updated_at"]):
                 last_updated = parse_date(service_version["updated_at"])
                 version_to_clone = service_version["number"]
-
+        logger.info(with_suffix(f"Using last updated version: {version_to_clone}"))
         return str(version_to_clone)
 
     async def get_all_service_ids(self, with_name=False) -> List[str]:
