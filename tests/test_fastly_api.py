@@ -207,6 +207,101 @@ class TestFastlyAPI(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
+    @patch("fastly_bouncer.fastly_api.logger")
+    async def test_get_candidate_version_active_found(self, mock_logger):
+        """Test get_candidate_version when active version exists"""
+        # Mock response with active version
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            {"number": 1, "active": False, "updated_at": "2023-01-01T10:00:00Z"},
+            {"number": 2, "active": True, "updated_at": "2023-01-02T10:00:00Z"},
+            {"number": 3, "active": False, "updated_at": "2023-01-03T10:00:00Z"},
+        ]
+
+        with patch.object(self.api.session, "get", return_value=mock_response):
+            result = await self.api.get_candidate_version("service123")
+
+        self.assertEqual(result, "2")
+        mock_logger.info.assert_called_with("Found active version: 2 ")
+
+    @patch("fastly_bouncer.fastly_api.logger")
+    async def test_get_candidate_version_no_active_uses_latest_updated(
+        self, mock_logger
+    ):
+        """Test get_candidate_version falls back to most recently updated version"""
+        # Mock response with no active versions
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            {"number": 1, "active": False, "updated_at": "2023-01-01T10:00:00Z"},
+            {
+                "number": 3,
+                "active": False,
+                "updated_at": "2023-01-03T15:30:00Z",  # Most recent
+            },
+            {"number": 2, "active": False, "updated_at": "2023-01-02T10:00:00Z"},
+        ]
+
+        with patch.object(self.api.session, "get", return_value=mock_response):
+            result = await self.api.get_candidate_version("service123")
+
+        self.assertEqual(result, "3")
+        mock_logger.info.assert_called_with("Using last updated version: 3 ")
+
+    @patch("fastly_bouncer.fastly_api.logger")
+    async def test_get_candidate_version_single_version(self, mock_logger):
+        """Test get_candidate_version with single version"""
+        # Mock response with single version (not active)
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            {"number": 1, "active": False, "updated_at": "2023-01-01T10:00:00Z"}
+        ]
+
+        with patch.object(self.api.session, "get", return_value=mock_response):
+            result = await self.api.get_candidate_version("service123")
+
+        self.assertEqual(result, "1")
+        mock_logger.info.assert_called_with("Using last updated version: 1 ")
+
+    @patch("fastly_bouncer.fastly_api.logger")
+    async def test_get_candidate_version_prefers_active_over_newer(self, mock_logger):
+        """Test get_candidate_version prefers active version even if newer version exists"""
+        # Mock response where active version is older than another version
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            {
+                "number": 1,
+                "active": True,  # Active but older
+                "updated_at": "2023-01-01T10:00:00Z",
+            },
+            {
+                "number": 2,
+                "active": False,  # Newer but not active
+                "updated_at": "2023-01-02T10:00:00Z",
+            },
+        ]
+
+        with patch.object(self.api.session, "get", return_value=mock_response):
+            result = await self.api.get_candidate_version("service123")
+
+        self.assertEqual(result, "1")
+        mock_logger.info.assert_called_with("Found active version: 1 ")
+
+    async def test_get_candidate_version_api_call(self):
+        """Test get_candidate_version makes correct API call"""
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            {"number": 1, "active": True, "updated_at": "2023-01-01T10:00:00Z"}
+        ]
+
+        with patch.object(
+            self.api.session, "get", return_value=mock_response
+        ) as mock_get:
+            await self.api.get_candidate_version("test_service_id")
+
+        mock_get.assert_called_once_with(
+            "https://api.fastly.com/service/test_service_id/version"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

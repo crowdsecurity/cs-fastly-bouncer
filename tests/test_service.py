@@ -319,3 +319,23 @@ class TestService(TestCase):
         )
         data_false = collection_false.as_jsonable_dict()
         self.assertFalse(data_false["fast_creation"])
+
+    def test_service_reload_acls(self):
+        """Test Service reload_acls method exists and has correct structure"""
+        # Create a service
+        service = Service(
+            api=self.mock_api,
+            version="3",
+            service_id="test_service",
+            recaptcha_site_key="test_key",
+            recaptcha_secret="test_secret",
+            activate=True,
+        )
+
+        # Verify the method exists
+        self.assertTrue(hasattr(service, "reload_acls"))
+        self.assertTrue(callable(getattr(service, "reload_acls")))
+
+        # Verify the helper method exists
+        self.assertTrue(hasattr(service, "_refresh_acl_collection"))
+        self.assertTrue(callable(getattr(service, "_refresh_acl_collection")))

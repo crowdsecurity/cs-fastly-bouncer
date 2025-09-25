@@ -146,14 +146,6 @@ class ACLCollection:
         new_items = new_state - self.state
         expired_items = self.state - new_state
 
-        logger.info(
-            with_suffix(
-                f"Processing {len(new_items)} items to add and {len(expired_items)} items to remove",
-                service_id=self.service_id,
-                action=self.action,
-            )
-        )
-
         if new_items:
             logger.info(
                 with_suffix(
@@ -167,6 +159,15 @@ class ACLCollection:
             logger.info(
                 with_suffix(
                     f"Removing {len(expired_items)} items from acl collection",
+                    service_id=self.service_id,
+                    action=self.action,
+                )
+            )
+
+        if not new_items and not expired_items:
+            logger.info(
+                with_suffix(
+                    "No items to add or remove from acl collection",
                     service_id=self.service_id,
                     action=self.action,
                 )
@@ -563,3 +564,59 @@ class Service:
             ]
         )
         return f"if ( {condition} )"
+
+    async def reload_acls(self):
+        """Refresh all ACL entries from Fastly to synchronize local state."""
+        logger.info(
+            with_suffix(
+                "Refreshing ACL entries from Fastly",
+                service_id=self.service_id,
+            )
+        )
+
+        async with trio.open_nursery() as n:
+            for action, acl_collection in self.acl_collection_by_action.items():
+                n.start_soon(self._refresh_acl_collection, action, acl_collection)
+
+        # Update VCL conditionals to match current ACL state after refresh
+        for action in self.vcl_by_action:
+            vcl = self.vcl_by_action[action]
+            vcl.conditional = self.generate_conditional_for_action(action)
+
+    async def _refresh_acl_collection(self, action: str, acl_collection):
+        """Refresh an entire ACL collection and synchronize local state."""
+        try:
+            # First refresh all ACL entries from Fastly
+            async with trio.open_nursery() as n:
+                for acl in acl_collection.acls:
+                    n.start_soon(self.api.refresh_acl_entries, acl)
+
+            # Now rebuild the local state from what's actually in Fastly
+            new_state = set()
+            for acl in acl_collection.acls:
+                # Add all IP entries from Fastly to our local state
+                for ip_with_subnet in acl.entries.keys():
+                    new_state.add(ip_with_subnet)
+
+            # Update the collection's state to match Fastly
+            acl_collection.state = new_state
+
+            # Clear any pending operations since we're now in sync
+            for acl in acl_collection.acls:
+                acl.entries_to_add.clear()
+                acl.entries_to_delete.clear()
+
+            logger.debug(
+                with_suffix(
+                    f"Refreshed ACL collection with {len(new_state)} entries",
+                    action=action,
+                    service_id=self.service_id,
+                )
+            )
+        except Exception as e:
+            logger.error(
+                with_suffix(
+                    f"Failed to refresh ACL collection for {action}: {e}",
+                    service_id=self.service_id,
+                )
+            )
