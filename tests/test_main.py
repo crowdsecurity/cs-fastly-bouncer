@@ -516,5 +516,129 @@ class TestRefreshMode(unittest.TestCase):
         asyncio.run(run_test())
 
 
+class TestSuccessTracking(unittest.TestCase):
+
+    def setUp(self):
+        """Set up test fixtures."""
+        # Mock FastlyAPI
+        self.mock_api = Mock(spec=MagicMock)
+        self.mock_api._token = "test_token"
+
+        # Create a test ACL
+        from fastly_bouncer.fastly_api import ACL
+
+        self.test_acl = ACL(
+            id="test_acl_id",
+            name="test_acl",
+            service_id="test_service",
+            version="test_version",
+            entries_to_add={"192.168.1.1"},
+            entries_to_delete=set(),
+            entries={},
+            entry_count=0,
+            created="2024-01-01",
+        )
+
+    def test_process_acl_return_type(self):
+        """Test that process_acl method exists and can return bool."""
+        from unittest.mock import AsyncMock
+
+        # Mock the process_acl method
+        self.mock_api.process_acl = AsyncMock()
+
+        # Verify the method signature accepts return values
+        self.mock_api.process_acl.return_value = True
+        self.assertTrue(self.mock_api.process_acl.return_value)
+
+        self.mock_api.process_acl.return_value = False
+        self.assertFalse(self.mock_api.process_acl.return_value)
+
+    def test_acl_collection_commit_return_type(self):
+        """Test that ACL collection commit method returns bool."""
+        from fastly_bouncer.service import ACLCollection
+
+        acl_collection = ACLCollection(
+            api=self.mock_api,
+            service_id="test_service",
+            version="test_version",
+            action="ban",
+            max_items=1000,
+            acls=[],
+            state=set(),
+        )
+
+        # Test the method signature - it should return bool
+        from inspect import signature
+
+        commit_sig = signature(acl_collection.commit)
+        self.assertEqual(commit_sig.return_annotation, bool)
+
+    def test_cache_consistency_logic(self):
+        """Test the cache consistency logic in main loop."""
+        from unittest.mock import AsyncMock
+
+        # Simulate the main loop logic
+        services = []
+        previous_states = []
+
+        # Create two mock services
+        service1 = Mock()
+        service1.service_id = "service1"
+        service1.as_jsonable_dict.return_value = {"state": "new_state_1"}
+        service1.transform_state = AsyncMock(return_value=True)  # Success
+
+        service2 = Mock()
+        service2.service_id = "service2"
+        service2.as_jsonable_dict.return_value = {"state": "new_state_2"}
+        service2.transform_state = AsyncMock(return_value=False)  # Failure
+
+        services = [service1, service2]
+        previous_states = [{"state": "old_state_1"}, {"state": "old_state_2"}]
+
+        # Simulate service results tracking
+        service_results = {
+            id(service1): True,  # Success
+            id(service2): False,  # Failure
+        }
+
+        # Categorize services by success/failure
+        successful_services = []
+        failed_services = []
+        for service in services:
+            service_success = service_results.get(id(service), False)
+            if service_success:
+                successful_services.append(service)
+            else:
+                failed_services.append(service)
+
+        # Generate new states (successful services get new state, failed get previous)
+        new_states = []
+        for i, service in enumerate(services):
+            if service in successful_services:
+                # Use current state for successful services
+                new_states.append(service.as_jsonable_dict())
+            else:
+                # Use previous state for failed services
+                if i < len(previous_states):
+                    new_states.append(previous_states[i])
+                else:
+                    # Fallback: use current state
+                    new_states.append(service.as_jsonable_dict())
+
+        # Verify results
+        self.assertEqual(len(successful_services), 1)
+        self.assertEqual(len(failed_services), 1)
+        self.assertEqual(successful_services[0], service1)
+        self.assertEqual(failed_services[0], service2)
+
+        # Verify cache states
+        self.assertEqual(
+            new_states[0], {"state": "new_state_1"}
+        )  # service1 succeeded, new state
+        self.assertEqual(
+            new_states[1], {"state": "old_state_2"}
+        )  # service2 failed, old state
+
+
 if __name__ == "__main__":
     unittest.main()

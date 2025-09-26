@@ -473,17 +473,60 @@ async def run(config: Config, services: List[Service]):
         new_state = crowdsec_client.get_current_decisions()
         logger.info(f"Retrieved {len(new_state)} active decisions from LAPI")
 
+        # Track which services updated successfully
+        service_results = {}
+
+        async def track_service_update(service, service_results):
+            success = await service.transform_state(new_state)
+            service_results[id(service)] = success
+
         async with trio.open_nursery() as n:
             for s in services:
-                n.start_soon(s.transform_state, new_state)
+                n.start_soon(track_service_update, s, service_results)
 
-        new_states = list(map(lambda service: service.as_jsonable_dict(), services))
+        # Only update cache with services that successfully committed to Fastly
+        successful_services = []
+        failed_services = []
+        for service in services:
+            service_success = service_results.get(id(service), False)
+            if service_success:
+                successful_services.append(service)
+            else:
+                failed_services.append(service)
+                logger.warning(
+                    f"Service {service.service_id} had failures - keeping previous cache state"
+                )
+
+        # Generate new states only from successful services
+        # For failed services, use their previous state from cache
+        new_states = []
+        for i, service in enumerate(services):
+            if service in successful_services:
+                # Use current state for successful services
+                new_states.append(service.as_jsonable_dict())
+            else:
+                # Use previous state for failed services
+                if i < len(previous_states):
+                    new_states.append(previous_states[i])
+                else:
+                    # Fallback: use current state but log warning
+                    logger.warning(
+                        "No previous state found for failed service, using current state"
+                    )
+                    new_states.append(service.as_jsonable_dict())
+
         if new_states != previous_states:
-            logger.debug("Updating local cache file")
+            logger.debug("Updating local cache file with successful service updates")
             new_cache = {"service_states": new_states, "bouncer_version": VERSION}
             async with await trio.open_file(config.cache_path, "w") as f:
                 await f.write(json.dumps(new_cache, indent=4))
-            logger.info("Local cache updated")
+
+            if failed_services:
+                logger.info(
+                    f"Local cache updated - {len(successful_services)} services succeeded, {len(failed_services)} failed"
+                )
+            else:
+                logger.info("Local cache updated - all services succeeded")
             previous_states = new_states
 
         if exiting:
