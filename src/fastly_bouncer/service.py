@@ -59,6 +59,20 @@ class ACLCollection:
         else:
             return await self._create_acls_sequential(acl_count)
 
+    async def _create_single_acl(self, index: int) -> ACL:
+        """
+        Shared helper method to create a single ACL with consistent naming and logging.
+        """
+        acl_name = f"crowdsec_{self.action}_{index}"
+        logger.debug(
+            with_suffix(f"Creating acl {acl_name} ", service_id=self.service_id)
+        )
+        acl = await self.api.create_acl_for_service(
+            service_id=self.service_id, version=self.version, name=acl_name
+        )
+        logger.info(with_suffix(f"Acl {acl_name} created", service_id=self.service_id))
+        return acl
+
     async def _create_acls_fast(self, acl_count: int) -> List[ACL]:
         """
         Fast ACL creation using trio.start_soon for parallel execution.
@@ -66,22 +80,13 @@ class ACLCollection:
         """
         acls = [None] * acl_count
 
-        async def create_single_acl(index: int):
-            acl_name = f"crowdsec_{self.action}_{index}"
-            logger.debug(
-                with_suffix(f"Creating acl {acl_name} ", service_id=self.service_id)
-            )
-            acl = await self.api.create_acl_for_service(
-                service_id=self.service_id, version=self.version, name=acl_name
-            )
-            logger.info(
-                with_suffix(f"Acl {acl_name} created", service_id=self.service_id)
-            )
+        async def create_and_store_acl(index: int):
+            acl = await self._create_single_acl(index)
             acls[index] = acl
 
         async with trio.open_nursery() as nursery:
             for i in range(acl_count):
-                nursery.start_soon(create_single_acl, i)
+                nursery.start_soon(create_and_store_acl, i)
 
         return acls
 
@@ -93,16 +98,7 @@ class ACLCollection:
         acls = [None] * acl_count  # Pre-allocate list with correct size
         # Create ACLs in reverse order (highest index first, 0 last)
         for i in reversed(range(acl_count)):
-            acl_name = f"crowdsec_{self.action}_{i}"
-            logger.debug(
-                with_suffix(f"Creating acl {acl_name} ", service_id=self.service_id)
-            )
-            acl = await self.api.create_acl_for_service(
-                service_id=self.service_id, version=self.version, name=acl_name
-            )
-            logger.info(
-                with_suffix(f"Acl {acl_name} created", service_id=self.service_id)
-            )
+            acl = await self._create_single_acl(i)
             acls[i] = acl  # Place ACL at correct index position
 
             # Small delay to ensure proper ordering at Fastly API level
@@ -146,14 +142,6 @@ class ACLCollection:
         new_items = new_state - self.state
         expired_items = self.state - new_state
 
-        logger.info(
-            with_suffix(
-                f"Processing {len(new_items)} items to add and {len(expired_items)} items to remove",
-                service_id=self.service_id,
-                action=self.action,
-            )
-        )
-
         if new_items:
             logger.info(
                 with_suffix(
@@ -167,6 +155,15 @@ class ACLCollection:
             logger.info(
                 with_suffix(
                     f"Removing {len(expired_items)} items from acl collection",
+                    service_id=self.service_id,
+                    action=self.action,
+                )
+            )
+
+        if not new_items and not expired_items:
+            logger.info(
+                with_suffix(
+                    "No items to add or remove from acl collection",
                     service_id=self.service_id,
                     action=self.action,
                 )
@@ -189,21 +186,37 @@ class ACLCollection:
         for expired_item in expired_items:
             self.remove_item(expired_item)
 
-    async def commit(self) -> None:
+    async def commit(self) -> bool:
         acls_to_change = list(
             filter(lambda acl: acl.entries_to_add or acl.entries_to_delete, self.acls)
         )
 
         if len(acls_to_change):
+            # Track success of each ACL update
+            results = {}
             async with trio.open_nursery() as n:
                 for acl in acls_to_change:
-                    n.start_soon(self.update_acl, acl)
-            logger.info(
-                with_suffix(
-                    f"ACL collection for {self.action} updated",
-                    service_id=self.service_id,
+                    n.start_soon(self.update_acl, acl, results)
+
+            # Check if all ACL updates succeeded
+            all_successful = all(results.values())
+            if all_successful:
+                logger.info(
+                    with_suffix(
+                        f"ACL collection for {self.action} updated successfully",
+                        service_id=self.service_id,
+                    )
                 )
-            )
+            else:
+                logger.warning(
+                    with_suffix(
+                        f"ACL collection for {self.action} had partial failures",
+                        service_id=self.service_id,
+                    )
+                )
+            return all_successful
+
+        return True  # No changes needed, consider successful
 
     def generate_conditions(self) -> str:
         conditions = []
@@ -212,7 +225,7 @@ class ACLCollection:
 
         return " || ".join(conditions)
 
-    async def update_acl(self, acl: ACL):
+    async def update_acl(self, acl: ACL, results: Dict = None):
         logger.debug(
             with_suffix(
                 f"Commiting changes to acl {acl.name}",
@@ -220,10 +233,15 @@ class ACLCollection:
                 acl_collection=self.action,
             )
         )
-        await self.api.process_acl(acl)
+        success = await self.api.process_acl(acl)
+
+        # Store result if results dict provided
+        if results is not None:
+            results[acl.id] = success
+
         logger.debug(
             with_suffix(
-                f"Commited changes to acl {acl.name}",
+                f"Commited changes to acl {acl.name} - {'success' if success else 'partial failure'}",
                 service_id=self.service_id,
                 acl_collection=self.action,
             )
@@ -426,7 +444,7 @@ class Service:
             self.countries_by_action[action].clear()
             self.autonomoussystems_by_action[action].clear()
 
-    async def transform_state(self, new_state: Dict[str, str]):
+    async def transform_state(self, new_state: Dict[str, str]) -> bool:
         """
         This method transforms the configuration of the service according to the "new_state".
         "new_state" is mapping of item->action. Eg  {"1.2.3.4": "ban", "CN": "captcha", "1234": "ban"}.
@@ -505,29 +523,52 @@ class Service:
             if new_systems:
                 logger.info(f"AS {new_systems} will get {action}")
 
-        await self.commit()
+        success = await self.commit()
+        return success
 
-    async def commit(self):
+    async def commit(self) -> bool:
+        # Track success of ACL collection updates
+        acl_results = {}
         async with trio.open_nursery() as n:
             for action in self.vcl_by_action:
-                n.start_soon(self.acl_collection_by_action[action].commit)
+                n.start_soon(self._commit_acl_collection, action, acl_results)
                 n.start_soon(self.update_vcl, action)
 
+        # Check if all ACL collections updated successfully
+        all_acl_successful = all(acl_results.values()) if acl_results else True
+
         if self._first_time and self.activate:
-            logger.debug(
-                with_suffix(
-                    f"Activating new service version {self.version}",
-                    service_id=self.service_id,
+            try:
+                logger.debug(
+                    with_suffix(
+                        f"Activating new service version {self.version}",
+                        service_id=self.service_id,
+                    )
                 )
-            )
-            await self.api.activate_service_version(self.service_id, self.version)
-            logger.info(
-                with_suffix(
-                    f"New service version {self.version} activated",
-                    service_id=self.service_id,
+                await self.api.activate_service_version(self.service_id, self.version)
+                logger.info(
+                    with_suffix(
+                        f"New service version {self.version} activated",
+                        service_id=self.service_id,
+                    )
                 )
-            )
-            self._first_time = False
+                self._first_time = False
+                return all_acl_successful  # Return ACL success status
+            except Exception as e:
+                logger.error(
+                    with_suffix(
+                        f"Failed to activate service version {self.version}: {e}",
+                        service_id=self.service_id,
+                    )
+                )
+                return False  # Activation failed
+
+        return all_acl_successful
+
+    async def _commit_acl_collection(self, action: str, results: Dict):
+        """Helper method to commit an ACL collection and track its success."""
+        success = await self.acl_collection_by_action[action].commit()
+        results[action] = success
 
     async def update_vcl(self, action: str):
         vcl = self.vcl_by_action[action]
@@ -563,3 +604,59 @@ class Service:
             ]
         )
         return f"if ( {condition} )"
+
+    async def reload_acls(self):
+        """Refresh all ACL entries from Fastly to synchronize local state."""
+        logger.info(
+            with_suffix(
+                "Refreshing ACL entries from Fastly",
+                service_id=self.service_id,
+            )
+        )
+
+        async with trio.open_nursery() as n:
+            for action, acl_collection in self.acl_collection_by_action.items():
+                n.start_soon(self._refresh_acl_collection, action, acl_collection)
+
+        # Update VCL conditionals to match current ACL state after refresh
+        for action in self.vcl_by_action:
+            vcl = self.vcl_by_action[action]
+            vcl.conditional = self.generate_conditional_for_action(action)
+
+    async def _refresh_acl_collection(self, action: str, acl_collection):
+        """Refresh an entire ACL collection and synchronize local state."""
+        try:
+            # First refresh all ACL entries from Fastly
+            async with trio.open_nursery() as n:
+                for acl in acl_collection.acls:
+                    n.start_soon(self.api.refresh_acl_entries, acl)
+
+            # Now rebuild the local state from what's actually in Fastly
+            new_state = set()
+            for acl in acl_collection.acls:
+                # Add all IP entries from Fastly to our local state
+                for ip_with_subnet in acl.entries.keys():
+                    new_state.add(ip_with_subnet)
+
+            # Update the collection's state to match Fastly
+            acl_collection.state = new_state
+
+            # Clear any pending operations since we're now in sync
+            for acl in acl_collection.acls:
+                acl.entries_to_add.clear()
+                acl.entries_to_delete.clear()
+
+            logger.debug(
+                with_suffix(
+                    f"Refreshed ACL collection with {len(new_state)} entries",
+                    action=action,
+                    service_id=self.service_id,
+                )
+            )
+        except Exception as e:
+            logger.error(
+                with_suffix(
+                    f"Failed to refresh ACL collection for {action}: {e}",
+                    service_id=self.service_id,
+                )
+            )

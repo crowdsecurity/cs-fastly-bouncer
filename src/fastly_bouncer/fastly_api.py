@@ -1,6 +1,7 @@
 import datetime
 import ipaddress
 import logging
+import random
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Set
 from urllib.parse import urljoin
@@ -17,6 +18,11 @@ ACL_BATCH_SIZE = (
     1000  # Max number of entries that can be added/removed in a single API call
 )
 ENTRIES_PER_PAGE = 1000
+
+# Retry configuration for rate limiting
+MAX_RETRIES = 5
+BASE_RETRY_DELAY = 1.0  # Base delay in seconds
+MAX_RETRY_DELAY = 32.0  # Maximum delay in seconds
 
 
 @dataclass
@@ -78,6 +84,55 @@ class VCL:
         }
 
 
+async def calculate_retry_delay(attempt: int) -> float:
+    """
+    Calculate exponential backoff delay with jitter for retry attempts.
+    """
+    if attempt <= 0:
+        return 0
+
+    # Exponential backoff: base_delay * 2^(attempt-1)
+    delay = BASE_RETRY_DELAY * (2 ** (attempt - 1))
+
+    # Cap the delay at MAX_RETRY_DELAY
+    delay = min(delay, MAX_RETRY_DELAY)
+
+    # Add jitter (±25% of the delay) to avoid thundering herd
+    jitter = delay * 0.25 * (2 * random.random() - 1)
+    return delay + jitter
+
+
+async def retry_on_rate_limit(func, *args, **kwargs):
+    """
+    Retry wrapper for API calls that may encounter 429 rate limits.
+    Implements exponential backoff with jitter.
+    """
+    last_exception = None
+
+    for attempt in range(MAX_RETRIES + 1):  # 0 to MAX_RETRIES
+        try:
+            return await func(*args, **kwargs)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:  # Rate limit
+                last_exception = e
+                if attempt < MAX_RETRIES:  # Don't sleep on the last attempt
+                    delay = await calculate_retry_delay(attempt + 1)
+                    logger.warning(
+                        f"Rate limited (429), retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRIES})"
+                    )
+                    await trio.sleep(delay)
+                    continue
+            # Re-raise non-429 errors immediately
+            raise
+        except Exception:
+            # Re-raise non-HTTP errors immediately
+            raise
+
+    # If we get here, all retries failed
+    logger.error(f"All {MAX_RETRIES} retry attempts failed for rate-limited request")
+    raise last_exception
+
+
 async def log_and_raise_on_error(response):
     if response.status_code >= 400:
         try:
@@ -105,26 +160,35 @@ class FastlyAPI:
             event_hooks={"response": [log_and_raise_on_error]},
         )
 
-    async def get_version_to_clone(self, service_id: str) -> str:
+    async def get_candidate_version(self, service_id: str) -> str:
         """
-        Gets the version to clone from. If the service has an active version, then the active version will be cloned.
-        Else the version which was last updated would be cloned
+        Get active the version of the service if any.
+        Else returns the version which was last updated.
         """
-
         service_versions_resp = await self.session.get(
             self.api_url(f"/service/{service_id}/version")
         )
         service_versions = service_versions_resp.json()
 
+        # First, look for an active version
+        for service_version in service_versions:
+            if service_version.get("active", False):
+                logger.info(
+                    with_suffix(f"Found active version: {service_version['number']}")
+                )
+                return str(service_version["number"])
+
+        # If no active version found, fall back to the most recently updated version
         version_to_clone = None
         last_updated = None
         for service_version in service_versions:
             if not last_updated:
                 version_to_clone = service_version["number"]
+                last_updated = parse_date(service_version["updated_at"])
             elif last_updated < parse_date(service_version["updated_at"]):
                 last_updated = parse_date(service_version["updated_at"])
                 version_to_clone = service_version["number"]
-
+        logger.info(with_suffix(f"Using last updated version: {version_to_clone}"))
         return str(version_to_clone)
 
     async def get_all_service_ids(self, with_name=False) -> List[str]:
@@ -315,7 +379,7 @@ class FastlyAPI:
         )
         return acl
 
-    async def process_acl(self, acl: ACL):
+    async def process_acl(self, acl: ACL) -> bool:
         logger.debug(
             with_suffix(f"entries to delete {acl.entries_to_delete}", acl_id=acl.id)
         )
@@ -354,7 +418,7 @@ class FastlyAPI:
             # Clear items that didn't need API calls (already existed or didn't exist)
             acl.entries_to_add -= successfully_processed_additions
             acl.entries_to_delete -= successfully_processed_deletions
-            return
+            return True  # Success - no operations needed
 
         logger.debug(
             with_suffix(
@@ -365,17 +429,22 @@ class FastlyAPI:
 
         # Only ACL_BATCH_SIZE operations per request can be done on an acl.
         async def process_batch(batch_entries, batch_idx):
-            try:
+            async def _patch_acl_entries():
+                """Inner function to perform the actual ACL patch request."""
                 # Remove the tracking field before sending to API
                 api_batch = [
                     {k: v for k, v in entry.items() if k != "item"}
                     for entry in batch_entries
                 ]
                 request_body = {"entries": api_batch}
-                await self.session.patch(
+                return await self.session.patch(
                     self.api_url(f"/service/{acl.service_id}/acl/{acl.id}/entries"),
                     json=request_body,
                 )
+
+            try:
+                # Use retry logic for the ACL patch request
+                await retry_on_rate_limit(_patch_acl_entries)
                 logger.debug(
                     with_suffix(
                         f"successfully processed batch {batch_idx} with {len(batch_entries)} operations",
@@ -423,6 +492,11 @@ class FastlyAPI:
                 acl_id=acl.id,
             )
         )
+
+        # Return True if we have pending operations that still need to be processed
+        # This indicates partial failure - some operations didn't complete
+        has_pending_operations = bool(acl.entries_to_add or acl.entries_to_delete)
+        return not has_pending_operations  # Success if no pending operations remain
 
     @staticmethod
     def api_url(endpoint: str) -> str:
