@@ -70,9 +70,7 @@ class ACLCollection:
         acl = await self.api.create_acl_for_service(
             service_id=self.service_id, version=self.version, name=acl_name
         )
-        logger.info(
-            with_suffix(f"Acl {acl_name} created", service_id=self.service_id)
-        )
+        logger.info(with_suffix(f"Acl {acl_name} created", service_id=self.service_id))
         return acl
 
     async def _create_acls_fast(self, acl_count: int) -> List[ACL]:
